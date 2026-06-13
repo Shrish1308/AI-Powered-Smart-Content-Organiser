@@ -1,0 +1,13 @@
+# Dependencies
+backend/venv/
+frontend/node_modules/
+
+# Local databases & configurations
+backend/smart_recall.db
+backend/.env
+frontend/.expo/
+frontend/web-build/
+
+# OS specific files
+.DS_Store
+Thumbs.db
