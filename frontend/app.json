@@ -11,6 +11,7 @@
       "resizeMode": "contain",
       "backgroundColor": "#0b0f19"
     },
+    "scheme": "smartrecall",
     "ios": {
       "supportsTablet": true
     },
@@ -25,7 +26,17 @@
       "bundler": "metro"
     },
     "plugins": [
-      "expo-font"
+      "expo-font",
+      [
+        "expo-share-intent",
+        {
+          "androidIntentFilters": ["text/*"],
+          "iosActivationRules": {
+            "NSExtensionActivationSupportsText": true,
+            "NSExtensionActivationSupportsWebURLWithMaxCount": 1
+          }
+        }
+      ]
     ]
   }
 }
