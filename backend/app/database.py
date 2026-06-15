@@ -15,6 +15,26 @@ def init_db():
     conn = get_db_connection()
     cursor = conn.cursor()
     
+    # Create users table
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS users (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            username TEXT UNIQUE NOT NULL,
+            password_hash TEXT NOT NULL,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+    ''')
+
+    # Create sessions table
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS sessions (
+            token TEXT PRIMARY KEY,
+            user_id INTEGER,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (user_id) REFERENCES users (id) ON DELETE CASCADE
+        )
+    ''')
+    
     # Create notes table
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS notes (
@@ -42,8 +62,89 @@ def init_db():
         )
     ''')
     
+    # Run notes table migration to add user_id column if it doesn't exist
+    cursor.execute("PRAGMA table_info(notes)")
+    columns = [col[1] for col in cursor.fetchall()]
+    if 'user_id' not in columns:
+        cursor.execute("ALTER TABLE notes ADD COLUMN user_id INTEGER REFERENCES users(id)")
+    
     conn.commit()
     conn.close()
+
+
+import hashlib
+import secrets
+
+def hash_password(password: str, salt: str = None) -> str:
+    if not salt:
+        salt = secrets.token_hex(8)
+    pw_hash = hashlib.sha256((password + salt).encode('utf-8')).hexdigest()
+    return f"{salt}:{pw_hash}"
+
+def verify_password(password: str, hashed_password: str) -> bool:
+    try:
+        salt, pw_hash = hashed_password.split(':')
+        new_hash = hashlib.sha256((password + salt).encode('utf-8')).hexdigest()
+        return new_hash == pw_hash
+    except Exception:
+        return False
+
+def create_user(username: str, password: str) -> Optional[int]:
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    password_hash = hash_password(password)
+    try:
+        cursor.execute('''
+            INSERT INTO users (username, password_hash)
+            VALUES (?, ?)
+        ''', (username, password_hash))
+        user_id = cursor.lastrowid
+        conn.commit()
+        return user_id
+    except sqlite3.IntegrityError:
+        return None
+    finally:
+        conn.close()
+
+def authenticate_user(username: str, password: str) -> Optional[str]:
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute('SELECT id, password_hash FROM users WHERE username = ?', (username,))
+    row = cursor.fetchone()
+    
+    if row and verify_password(password, row['password_hash']):
+        user_id = row['id']
+        token = secrets.token_hex(24)
+        cursor.execute('''
+            INSERT INTO sessions (token, user_id)
+            VALUES (?, ?)
+        ''', (token, user_id))
+        conn.commit()
+        conn.close()
+        return token
+    
+    conn.close()
+    return None
+
+def get_user_by_session(token: str) -> Optional[int]:
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute('SELECT user_id FROM sessions WHERE token = ?', (token,))
+    row = cursor.fetchone()
+    conn.close()
+    if row:
+        return row['user_id']
+    return None
+
+def delete_session(token: str) -> bool:
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute('DELETE FROM sessions WHERE token = ?', (token,))
+    changes = conn.total_changes
+    conn.commit()
+    conn.close()
+    return changes > 0
+
 
 def cosine_similarity(v1: List[float], v2: List[float]) -> float:
     """Calculates cosine similarity between two vectors."""
@@ -70,7 +171,7 @@ def cosine_similarity(v1: List[float], v2: List[float]) -> float:
 
 def save_note(content: str, url: Optional[str] = None, summary: Optional[str] = None, 
               category: Optional[str] = None, tags: List[str] = [], 
-              embedding: Optional[List[float]] = None) -> int:
+              embedding: Optional[List[float]] = None, user_id: Optional[int] = None) -> int:
     conn = get_db_connection()
     cursor = conn.cursor()
     
@@ -78,9 +179,9 @@ def save_note(content: str, url: Optional[str] = None, summary: Optional[str] = 
     embedding_str = json.dumps(embedding) if embedding else None
     
     cursor.execute('''
-        INSERT INTO notes (content, url, summary, category, tags, embedding)
-        VALUES (?, ?, ?, ?, ?, ?)
-    ''', (content, url, summary, category, tags_str, embedding_str))
+        INSERT INTO notes (content, url, summary, category, tags, embedding, user_id)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+    ''', (content, url, summary, category, tags_str, embedding_str, user_id))
     
     note_id = cursor.lastrowid
     conn.commit()
@@ -102,16 +203,24 @@ def get_note(note_id: int) -> Optional[Dict[str, Any]]:
         return note
     return None
 
-def get_all_notes(category: Optional[str] = None, tag: Optional[str] = None) -> List[Dict[str, Any]]:
+def get_all_notes(category: Optional[str] = None, tag: Optional[str] = None, user_id: Optional[int] = None) -> List[Dict[str, Any]]:
     conn = get_db_connection()
     cursor = conn.cursor()
     
     query = 'SELECT * FROM notes'
+    conditions = []
     params = []
     
+    if user_id is not None:
+        conditions.append('user_id = ?')
+        params.append(user_id)
+        
     if category:
-        query += ' WHERE category = ?'
+        conditions.append('category = ?')
         params.append(category)
+        
+    if conditions:
+        query += ' WHERE ' + ' AND '.join(conditions)
         
     query += ' ORDER BY created_at DESC'
     
@@ -134,12 +243,12 @@ def get_all_notes(category: Optional[str] = None, tag: Optional[str] = None) -> 
         
     return notes
 
-def search_notes_semantic(query_embedding: List[float], limit: int = 5) -> List[Dict[str, Any]]:
+def search_notes_semantic(query_embedding: List[float], limit: int = 5, user_id: Optional[int] = None) -> List[Dict[str, Any]]:
     """Retrieves all notes and ranks them by cosine similarity to the query embedding."""
     if not query_embedding:
         return []
         
-    notes = get_all_notes()
+    notes = get_all_notes(user_id=user_id)
     scored_notes = []
     
     for note in notes:
@@ -178,7 +287,7 @@ def save_reminder(note_id: int, reminder_date: str, message: str) -> int:
     conn.close()
     return reminder_id
 
-def get_reminders(status: Optional[str] = None) -> List[Dict[str, Any]]:
+def get_reminders(status: Optional[str] = None, user_id: Optional[int] = None) -> List[Dict[str, Any]]:
     conn = get_db_connection()
     cursor = conn.cursor()
     
@@ -187,11 +296,19 @@ def get_reminders(status: Optional[str] = None) -> List[Dict[str, Any]]:
         FROM reminders r
         JOIN notes n ON r.note_id = n.id
     '''
+    conditions = []
     params = []
     
+    if user_id is not None:
+        conditions.append('n.user_id = ?')
+        params.append(user_id)
+        
     if status:
-        query += ' WHERE r.status = ?'
+        conditions.append('r.status = ?')
         params.append(status)
+        
+    if conditions:
+        query += ' WHERE ' + ' AND '.join(conditions)
         
     query += ' ORDER BY r.reminder_date ASC'
     
@@ -209,3 +326,4 @@ def update_reminder_status(reminder_id: int, status: str) -> bool:
     conn.commit()
     conn.close()
     return changes > 0
+
