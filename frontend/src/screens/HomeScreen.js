@@ -16,8 +16,15 @@ import {
   Animated
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
-import { useShareIntent } from 'expo-share-intent';
 import { AuthContext } from '../context/AuthContext';
+
+// Safe optional import — expo-share-intent is mobile-only and may not be installed
+let useShareIntent = null;
+try {
+  useShareIntent = require('expo-share-intent').useShareIntent;
+} catch (e) {
+  // Package not installed — share intent feature will be disabled
+}
 
 // FastAPI Backend URL - change if running on a physical mobile device
 const API_BASE_URL = 'http://localhost:8000';
@@ -102,12 +109,14 @@ export default function HomeScreen() {
   const [shareText, setShareText] = useState('');
   const [shareSaving, setShareSaving] = useState(false);
 
-  // Expo Share Intent Hook
+  // Expo Share Intent Hook (mobile-only, may not be installed)
   let shareIntentResult = { hasShareIntent: false, shareIntent: null, resetShareIntent: () => {}, error: null };
-  try {
-    shareIntentResult = useShareIntent();
-  } catch (e) {
-    console.log("Share intent hook error:", e);
+  if (useShareIntent) {
+    try {
+      shareIntentResult = useShareIntent();
+    } catch (e) {
+      console.log("Share intent hook error:", e);
+    }
   }
   const { hasShareIntent, shareIntent, resetShareIntent } = shareIntentResult;
 

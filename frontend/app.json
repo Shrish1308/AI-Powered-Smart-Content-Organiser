@@ -26,17 +26,7 @@
       "bundler": "metro"
     },
     "plugins": [
-      "expo-font",
-      [
-        "expo-share-intent",
-        {
-          "androidIntentFilters": ["text/*"],
-          "iosActivationRules": {
-            "NSExtensionActivationSupportsText": true,
-            "NSExtensionActivationSupportsWebURLWithMaxCount": 1
-          }
-        }
-      ]
+      "expo-font"
     ]
   }
 }
