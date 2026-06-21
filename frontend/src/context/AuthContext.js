@@ -35,8 +35,6 @@ export const AuthProvider = ({ children }) => {
     userToken,
     username,
     signIn: async (inputUsername, inputPassword) => {
-      setIsLoading(true);
-
       try {
         const response = await fetch(`${API_BASE_URL}/api/auth/login`, {
           method: 'POST',
@@ -56,22 +54,17 @@ export const AuthProvider = ({ children }) => {
           }
           setUserToken(token);
           setUsername(user);
-          setIsLoading(false);
           return { success: true };
         } else {
           const errorData = await response.json().catch(() => ({}));
-          setIsLoading(false);
           return { success: false, message: errorData.detail || 'Invalid username or password' };
         }
       } catch (e) {
         console.error('Login network error:', e);
-        setIsLoading(false);
         return { success: false, message: 'Cannot connect to server. Is the backend running?' };
       }
     },
     signUp: async (newUsername, newPassword) => {
-      setIsLoading(true);
-
       try {
         const response = await fetch(`${API_BASE_URL}/api/auth/register`, {
           method: 'POST',
@@ -80,16 +73,13 @@ export const AuthProvider = ({ children }) => {
         });
 
         if (response.ok) {
-          setIsLoading(false);
           return { success: true };
         } else {
           const errorData = await response.json().catch(() => ({}));
-          setIsLoading(false);
           return { success: false, message: errorData.detail || 'Registration failed' };
         }
       } catch (e) {
         console.error('Registration network error:', e);
-        setIsLoading(false);
         return { success: false, message: 'Cannot connect to server. Is the backend running?' };
       }
     },
