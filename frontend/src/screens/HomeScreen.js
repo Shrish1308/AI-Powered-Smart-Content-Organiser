@@ -23,46 +23,6 @@ import { AuthContext } from '../context/AuthContext';
 const API_BASE_URL = 'http://localhost:8000';
 
 // Shimmer Placeholders for Loading Animation
-const ShimmerLine = ({ width = '100%', height = 14, style = {} }) => {
-  const animatedValue = useRef(new Animated.Value(0.3)).current;
-
-  useEffect(() => {
-    const animation = Animated.loop(
-      Animated.sequence([
-        Animated.timing(animatedValue, {
-          toValue: 1,
-          duration: 800,
-          useNativeDriver: true,
-        }),
-        Animated.timing(animatedValue, {
-          toValue: 0.3,
-          duration: 800,
-          useNativeDriver: true,
-        })
-      ])
-    );
-    animation.start();
-    return () => animation.stop();
-  }, [animatedValue]);
-
-  return (
-    <Animated.View 
-      style={[
-        {
-          width,
-          height,
-          backgroundColor: 'rgba(255, 255, 255, 0.08)',
-          borderRadius: 4,
-          opacity: animatedValue
-        },
-        style
-      ]}
-    />
-  );
-};
-
-// Simple Fallback Shimmer implementation if Animated is imported dynamically
-// In React Native, Animated is directly imported at the top
 const AnimatedShimmerLine = ({ width = '100%', height = 14, style = {} }) => {
   const animatedValue = useRef(new Animated.Value(0.3)).current;
 
@@ -837,7 +797,7 @@ export default function HomeScreen() {
                   <Text style={styles.noteSummaryText} numberOfLines={2}>{item.summary}</Text>
                 ) : null}
                 <View style={styles.tagsContainer}>
-                  {item.tags.map(tag => (
+                  {item.tags && item.tags.map(tag => (
                     <View key={tag} style={styles.tagBadge}>
                       <Text style={styles.tagBadgeText}>#{tag}</Text>
                     </View>

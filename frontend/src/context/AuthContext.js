@@ -3,11 +3,8 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 
 export const AuthContext = createContext();
 
-// Simple in-memory mock user database for frontend-only simulation
-// In real app, this would be backend-driven
-const MOCK_USER_DB = [
-  { username: 'testuser', password: 'testpassword' }
-];
+// FastAPI Backend URL - must match HomeScreen.js
+const API_BASE_URL = 'http://localhost:8000';
 
 export const AuthProvider = ({ children }) => {
   const [isLoading, setIsLoading] = useState(true);
@@ -39,48 +36,78 @@ export const AuthProvider = ({ children }) => {
     username,
     signIn: async (inputUsername, inputPassword) => {
       setIsLoading(true);
-      
-      // Look up user in simulated database
-      const foundUser = MOCK_USER_DB.find(
-        (u) => u.username.toLowerCase() === inputUsername.toLowerCase() && u.password === inputPassword
-      );
 
-      if (foundUser) {
-        const token = `mock-token-${foundUser.username}`;
-        try {
-          await AsyncStorage.setItem('userToken', token);
-          await AsyncStorage.setItem('username', foundUser.username);
-        } catch (e) {
-          console.error(e);
+      try {
+        const response = await fetch(`${API_BASE_URL}/api/auth/login`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ username: inputUsername, password: inputPassword })
+        });
+
+        if (response.ok) {
+          const data = await response.json();
+          const token = data.token;
+          const user = data.username;
+          try {
+            await AsyncStorage.setItem('userToken', token);
+            await AsyncStorage.setItem('username', user);
+          } catch (e) {
+            console.error('Failed to persist token:', e);
+          }
+          setUserToken(token);
+          setUsername(user);
+          setIsLoading(false);
+          return { success: true };
+        } else {
+          const errorData = await response.json().catch(() => ({}));
+          setIsLoading(false);
+          return { success: false, message: errorData.detail || 'Invalid username or password' };
         }
-        setUserToken(token);
-        setUsername(foundUser.username);
+      } catch (e) {
+        console.error('Login network error:', e);
         setIsLoading(false);
-        return { success: true };
-      } else {
-        setIsLoading(false);
-        return { success: false, message: 'Invalid username or password' };
+        return { success: false, message: 'Cannot connect to server. Is the backend running?' };
       }
     },
     signUp: async (newUsername, newPassword) => {
       setIsLoading(true);
-      
-      const userExists = MOCK_USER_DB.some(
-        (u) => u.username.toLowerCase() === newUsername.toLowerCase()
-      );
 
-      if (userExists) {
+      try {
+        const response = await fetch(`${API_BASE_URL}/api/auth/register`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ username: newUsername, password: newPassword })
+        });
+
+        if (response.ok) {
+          setIsLoading(false);
+          return { success: true };
+        } else {
+          const errorData = await response.json().catch(() => ({}));
+          setIsLoading(false);
+          return { success: false, message: errorData.detail || 'Registration failed' };
+        }
+      } catch (e) {
+        console.error('Registration network error:', e);
         setIsLoading(false);
-        return { success: false, message: 'Username is already taken' };
+        return { success: false, message: 'Cannot connect to server. Is the backend running?' };
       }
-
-      // Register user in simulated database
-      MOCK_USER_DB.push({ username: newUsername, password: newPassword });
-      setIsLoading(false);
-      return { success: true };
     },
     signOut: async () => {
       setIsLoading(true);
+      // Call backend logout to invalidate session
+      try {
+        const token = await AsyncStorage.getItem('userToken');
+        if (token) {
+          await fetch(`${API_BASE_URL}/api/auth/logout`, {
+            method: 'POST',
+            headers: { 'Authorization': `Bearer ${token}` }
+          });
+        }
+      } catch (e) {
+        console.error('Logout network error (non-fatal):', e);
+      }
+      // Always clear local state regardless of backend response
       try {
         await AsyncStorage.removeItem('userToken');
         await AsyncStorage.removeItem('username');

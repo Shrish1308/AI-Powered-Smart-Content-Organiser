@@ -67,7 +67,7 @@ export default function LoginScreen({ onToggleAuth }) {
                 <Ionicons name="person-outline" size={18} color="#94a3b8" style={styles.inputIcon} />
                 <TextInput
                   style={styles.textInput}
-                  placeholder="Enter username... (e.g. testuser)"
+                  placeholder="Enter your username..."
                   placeholderTextColor="#64748b"
                   value={usernameInput}
                   onChangeText={setUsernameInput}
@@ -82,7 +82,7 @@ export default function LoginScreen({ onToggleAuth }) {
                 <Ionicons name="lock-closed-outline" size={18} color="#94a3b8" style={styles.inputIcon} />
                 <TextInput
                   style={styles.textInput}
-                  placeholder="Enter password... (e.g. testpassword)"
+                  placeholder="Enter your password..."
                   placeholderTextColor="#64748b"
                   secureTextEntry
                   value={passwordInput}

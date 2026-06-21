@@ -140,10 +140,10 @@ def delete_session(token: str) -> bool:
     conn = get_db_connection()
     cursor = conn.cursor()
     cursor.execute('DELETE FROM sessions WHERE token = ?', (token,))
-    changes = conn.total_changes
+    deleted = cursor.rowcount > 0
     conn.commit()
     conn.close()
-    return changes > 0
+    return deleted
 
 
 def cosine_similarity(v1: List[float], v2: List[float]) -> float:
@@ -170,12 +170,12 @@ def cosine_similarity(v1: List[float], v2: List[float]) -> float:
         return dot_product / (norm_v1 * norm_v2)
 
 def save_note(content: str, url: Optional[str] = None, summary: Optional[str] = None, 
-              category: Optional[str] = None, tags: List[str] = [], 
+              category: Optional[str] = None, tags: Optional[List[str]] = None, 
               embedding: Optional[List[float]] = None, user_id: Optional[int] = None) -> int:
     conn = get_db_connection()
     cursor = conn.cursor()
     
-    tags_str = json.dumps(tags)
+    tags_str = json.dumps(tags if tags is not None else [])
     embedding_str = json.dumps(embedding) if embedding else None
     
     cursor.execute('''
@@ -270,10 +270,10 @@ def delete_note(note_id: int) -> bool:
     conn = get_db_connection()
     cursor = conn.cursor()
     cursor.execute('DELETE FROM notes WHERE id = ?', (note_id,))
-    changes = conn.total_changes
+    deleted = cursor.rowcount > 0
     conn.commit()
     conn.close()
-    return changes > 0
+    return deleted
 
 def save_reminder(note_id: int, reminder_date: str, message: str) -> int:
     conn = get_db_connection()
@@ -322,8 +322,8 @@ def update_reminder_status(reminder_id: int, status: str) -> bool:
     conn = get_db_connection()
     cursor = conn.cursor()
     cursor.execute('UPDATE reminders SET status = ? WHERE id = ?', (status, reminder_id))
-    changes = conn.total_changes
+    updated = cursor.rowcount > 0
     conn.commit()
     conn.close()
-    return changes > 0
+    return updated
 
