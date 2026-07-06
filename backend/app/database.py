@@ -1,329 +1,482 @@
-import sqlite3
 import json
 import os
-import math
+import hashlib
+import secrets
 from typing import List, Dict, Any, Optional
 
-DB_PATH = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "smart_recall.db")
+import psycopg2
+import psycopg2.extras
+from dotenv import load_dotenv
+
+load_dotenv()
+
+# ---------------------------------------------------------------------------
+# Connection
+# ---------------------------------------------------------------------------
+
+SUPABASE_DB_URL = os.environ.get("SUPABASE_DB_URL")
+
 
 def get_db_connection():
-    conn = sqlite3.connect(DB_PATH)
-    conn.row_factory = sqlite3.Row
+    """Returns a psycopg2 connection to Supabase PostgreSQL."""
+    if not SUPABASE_DB_URL:
+        raise RuntimeError(
+            "SUPABASE_DB_URL is not set in the environment. "
+            "Add it to backend/.env and restart the server."
+        )
+    conn = psycopg2.connect(SUPABASE_DB_URL)
     return conn
 
+
+# ---------------------------------------------------------------------------
+# Schema Initialisation
+# ---------------------------------------------------------------------------
+
 def init_db():
+    """Creates all required tables and enables pgvector if not already set up."""
     conn = get_db_connection()
     cursor = conn.cursor()
-    
-    # Create users table
-    cursor.execute('''
+
+    # Enable pgvector extension (idempotent)
+    cursor.execute("CREATE EXTENSION IF NOT EXISTS vector;")
+
+    # Users table
+    cursor.execute("""
         CREATE TABLE IF NOT EXISTS users (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            id SERIAL PRIMARY KEY,
             username TEXT UNIQUE NOT NULL,
             password_hash TEXT NOT NULL,
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-        )
-    ''')
+            created_at TIMESTAMPTZ DEFAULT NOW()
+        );
+    """)
 
-    # Create sessions table
-    cursor.execute('''
+    # Sessions table
+    cursor.execute("""
         CREATE TABLE IF NOT EXISTS sessions (
             token TEXT PRIMARY KEY,
-            user_id INTEGER,
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            FOREIGN KEY (user_id) REFERENCES users (id) ON DELETE CASCADE
-        )
-    ''')
-    
-    # Create notes table
-    cursor.execute('''
+            user_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
+            created_at TIMESTAMPTZ DEFAULT NOW()
+        );
+    """)
+
+    # Notes table — embedding stored as native vector(3072) for pgvector
+    # gemini-embedding-001 returns 3072-dimensional vectors by default
+    cursor.execute("""
         CREATE TABLE IF NOT EXISTS notes (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            id SERIAL PRIMARY KEY,
             content TEXT NOT NULL,
             url TEXT,
             summary TEXT,
             category TEXT,
-            tags TEXT, -- JSON array of tags: ["tag1", "tag2"]
-            embedding TEXT, -- JSON array of floats
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-        )
-    ''')
-    
-    # Create reminders table
-    cursor.execute('''
-        CREATE TABLE IF NOT EXISTS reminders (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            note_id INTEGER,
-            reminder_date TEXT NOT NULL, -- YYYY-MM-DD
-            message TEXT NOT NULL,
-            status TEXT DEFAULT 'pending', -- pending, completed
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            FOREIGN KEY (note_id) REFERENCES notes (id) ON DELETE CASCADE
-        )
-    ''')
-    
-    # Run notes table migration to add user_id column if it doesn't exist
-    cursor.execute("PRAGMA table_info(notes)")
-    columns = [col[1] for col in cursor.fetchall()]
-    if 'user_id' not in columns:
-        cursor.execute("ALTER TABLE notes ADD COLUMN user_id INTEGER REFERENCES users(id)")
-    
+            tags JSONB DEFAULT '[]'::jsonb,
+            embedding vector(3072),
+            user_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
+            created_at TIMESTAMPTZ DEFAULT NOW()
+        );
+    """)
     conn.commit()
+
+    # ── Dimension migration ───────────────────────────────────────────────────
+    # pgvector stores the column dimension in pg_attribute.atttypmod.
+    # If the column already exists as vector(768) we need to drop and re-add it
+    # because PostgreSQL cannot resize a vector type in place.
+    try:
+        cursor.execute("""
+            SELECT pa.atttypmod
+            FROM pg_attribute pa
+            JOIN pg_class pc ON pa.attrelid = pc.oid
+            WHERE pc.relname = 'notes'
+              AND pa.attname = 'embedding'
+              AND pa.attnum > 0;
+        """)
+        row = cursor.fetchone()
+        current_dim = row[0] if row else None
+
+        if current_dim is not None and current_dim != 3072:
+            print(f"⚠️  Embedding column has dimension {current_dim}, migrating to 3072 …")
+            # Must drop the index before altering the column
+            cursor.execute("DROP INDEX IF EXISTS notes_embedding_idx;")
+            cursor.execute("ALTER TABLE notes DROP COLUMN IF EXISTS embedding;")
+            cursor.execute("ALTER TABLE notes ADD COLUMN embedding vector(3072);")
+            conn.commit()
+            print("✅ Embedding column successfully migrated to vector(3072)")
+        else:
+            conn.rollback()  # nothing changed — discard read-only transaction
+    except Exception as mig_err:
+        conn.rollback()
+        print(f"⚠️  Dimension check skipped (non-fatal): {mig_err}")
+
+    # ── ANN index ─────────────────────────────────────────────────────────────
+    # Wrapped in try/except — ivfflat requires ≥ lists rows; may fail on empty table
+    try:
+        cursor.execute("""
+            CREATE INDEX IF NOT EXISTS notes_embedding_idx
+            ON notes USING ivfflat (embedding vector_cosine_ops)
+            WITH (lists = 50);
+        """)
+        conn.commit()
+    except Exception as idx_err:
+        print(f"⚠️  Could not create ivfflat index (non-fatal): {idx_err}")
+        conn.rollback()
+
+    # Reminders table
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS reminders (
+            id SERIAL PRIMARY KEY,
+            note_id INTEGER REFERENCES notes(id) ON DELETE CASCADE,
+            reminder_date TEXT NOT NULL,
+            message TEXT NOT NULL,
+            status TEXT DEFAULT 'pending',
+            created_at TIMESTAMPTZ DEFAULT NOW()
+        );
+    """)
+
+    conn.commit()
+    cursor.close()
     conn.close()
+    print("✅ Database initialised successfully (Supabase PostgreSQL + pgvector).")
 
 
-import hashlib
-import secrets
+
+# ---------------------------------------------------------------------------
+# Auth Helpers
+# ---------------------------------------------------------------------------
 
 def hash_password(password: str, salt: str = None) -> str:
     if not salt:
         salt = secrets.token_hex(8)
-    pw_hash = hashlib.sha256((password + salt).encode('utf-8')).hexdigest()
+    pw_hash = hashlib.sha256((password + salt).encode("utf-8")).hexdigest()
     return f"{salt}:{pw_hash}"
+
 
 def verify_password(password: str, hashed_password: str) -> bool:
     try:
-        salt, pw_hash = hashed_password.split(':')
-        new_hash = hashlib.sha256((password + salt).encode('utf-8')).hexdigest()
+        salt, pw_hash = hashed_password.split(":")
+        new_hash = hashlib.sha256((password + salt).encode("utf-8")).hexdigest()
         return new_hash == pw_hash
     except Exception:
         return False
+
 
 def create_user(username: str, password: str) -> Optional[int]:
     conn = get_db_connection()
     cursor = conn.cursor()
     password_hash = hash_password(password)
     try:
-        cursor.execute('''
-            INSERT INTO users (username, password_hash)
-            VALUES (?, ?)
-        ''', (username, password_hash))
-        user_id = cursor.lastrowid
+        cursor.execute(
+            "INSERT INTO users (username, password_hash) VALUES (%s, %s) RETURNING id;",
+            (username, password_hash),
+        )
+        user_id = cursor.fetchone()[0]
         conn.commit()
         return user_id
-    except sqlite3.IntegrityError:
+    except psycopg2.errors.UniqueViolation:
+        conn.rollback()
         return None
     finally:
+        cursor.close()
         conn.close()
+
 
 def authenticate_user(username: str, password: str) -> Optional[str]:
     conn = get_db_connection()
-    cursor = conn.cursor()
-    cursor.execute('SELECT id, password_hash FROM users WHERE username = ?', (username,))
+    cursor = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+    cursor.execute(
+        "SELECT id, password_hash FROM users WHERE username = %s;", (username,)
+    )
     row = cursor.fetchone()
-    
-    if row and verify_password(password, row['password_hash']):
-        user_id = row['id']
+
+    if row and verify_password(password, row["password_hash"]):
+        user_id = row["id"]
         token = secrets.token_hex(24)
-        cursor.execute('''
-            INSERT INTO sessions (token, user_id)
-            VALUES (?, ?)
-        ''', (token, user_id))
+        cursor.execute(
+            "INSERT INTO sessions (token, user_id) VALUES (%s, %s);",
+            (token, user_id),
+        )
         conn.commit()
+        cursor.close()
         conn.close()
         return token
-    
+
+    cursor.close()
     conn.close()
     return None
+
 
 def get_user_by_session(token: str) -> Optional[int]:
     conn = get_db_connection()
     cursor = conn.cursor()
-    cursor.execute('SELECT user_id FROM sessions WHERE token = ?', (token,))
+    cursor.execute("SELECT user_id FROM sessions WHERE token = %s;", (token,))
     row = cursor.fetchone()
+    cursor.close()
     conn.close()
-    if row:
-        return row['user_id']
-    return None
+    return row[0] if row else None
+
 
 def delete_session(token: str) -> bool:
     conn = get_db_connection()
     cursor = conn.cursor()
-    cursor.execute('DELETE FROM sessions WHERE token = ?', (token,))
+    cursor.execute("DELETE FROM sessions WHERE token = %s;", (token,))
     deleted = cursor.rowcount > 0
     conn.commit()
+    cursor.close()
     conn.close()
     return deleted
 
 
-def cosine_similarity(v1: List[float], v2: List[float]) -> float:
-    """Calculates cosine similarity between two vectors."""
-    if not v1 or not v2 or len(v1) != len(v2):
-        return 0.0
-    
-    # Try using numpy for speed if available, otherwise fallback to pure python
-    try:
-        import numpy as np
-        dot_product = np.dot(v1, v2)
-        norm_v1 = np.linalg.norm(v1)
-        norm_v2 = np.linalg.norm(v2)
-        if norm_v1 == 0 or norm_v2 == 0:
-            return 0.0
-        return float(dot_product / (norm_v1 * norm_v2))
-    except Exception:
-        # Fallback to pure python
-        dot_product = sum(x * y for x, y in zip(v1, v2))
-        norm_v1 = math.sqrt(sum(x * x for x in v1))
-        norm_v2 = math.sqrt(sum(y * y for y in v2))
-        if norm_v1 == 0 or norm_v2 == 0:
-            return 0.0
-        return dot_product / (norm_v1 * norm_v2)
+# ---------------------------------------------------------------------------
+# Note Operations
+# ---------------------------------------------------------------------------
 
-def save_note(content: str, url: Optional[str] = None, summary: Optional[str] = None, 
-              category: Optional[str] = None, tags: Optional[List[str]] = None, 
-              embedding: Optional[List[float]] = None, user_id: Optional[int] = None) -> int:
+def _row_to_note(row: dict) -> dict:
+    """Normalises a raw database row into a clean note dict."""
+    note = dict(row)
+    # tags arrives as a Python list already (psycopg2 deserialises JSONB)
+    if isinstance(note.get("tags"), str):
+        note["tags"] = json.loads(note["tags"])
+    elif note.get("tags") is None:
+        note["tags"] = []
+    # created_at → ISO string for JSON serialisation
+    if note.get("created_at") and not isinstance(note["created_at"], str):
+        note["created_at"] = note["created_at"].strftime("%Y-%m-%d %H:%M:%S")
+    return note
+
+
+def save_note(
+    content: str,
+    url: Optional[str] = None,
+    summary: Optional[str] = None,
+    category: Optional[str] = None,
+    tags: Optional[List[str]] = None,
+    embedding: Optional[List[float]] = None,
+    user_id: Optional[int] = None,
+) -> int:
     conn = get_db_connection()
     cursor = conn.cursor()
-    
-    tags_str = json.dumps(tags if tags is not None else [])
-    embedding_str = json.dumps(embedding) if embedding else None
-    
-    cursor.execute('''
-        INSERT INTO notes (content, url, summary, category, tags, embedding, user_id)
-        VALUES (?, ?, ?, ?, ?, ?, ?)
-    ''', (content, url, summary, category, tags_str, embedding_str, user_id))
-    
-    note_id = cursor.lastrowid
+
+    tags_json = json.dumps(tags if tags is not None else [])
+
+    # Convert the embedding list to a PostgreSQL vector literal string
+    embedding_str = (
+        "[" + ",".join(str(x) for x in embedding) + "]" if embedding else None
+    )
+
+    # Use two separate INSERT statements so we never try to cast NULL to vector
+    if embedding_str is not None:
+        cursor.execute(
+            """
+            INSERT INTO notes (content, url, summary, category, tags, embedding, user_id)
+            VALUES (%s, %s, %s, %s, %s::jsonb, %s::vector, %s)
+            RETURNING id;
+            """,
+            (content, url, summary, category, tags_json, embedding_str, user_id),
+        )
+    else:
+        cursor.execute(
+            """
+            INSERT INTO notes (content, url, summary, category, tags, embedding, user_id)
+            VALUES (%s, %s, %s, %s, %s::jsonb, NULL, %s)
+            RETURNING id;
+            """,
+            (content, url, summary, category, tags_json, user_id),
+        )
+    note_id = cursor.fetchone()[0]
     conn.commit()
+    cursor.close()
     conn.close()
     return note_id
 
+
 def get_note(note_id: int) -> Optional[Dict[str, Any]]:
     conn = get_db_connection()
-    cursor = conn.cursor()
-    cursor.execute('SELECT * FROM notes WHERE id = ?', (note_id,))
+    cursor = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+    cursor.execute(
+        "SELECT id, content, url, summary, category, tags, user_id, created_at FROM notes WHERE id = %s;",
+        (note_id,),
+    )
     row = cursor.fetchone()
+    cursor.close()
     conn.close()
-    
-    if row:
-        note = dict(row)
-        note['tags'] = json.loads(note['tags']) if note['tags'] else []
-        if note['embedding']:
-            note['embedding'] = json.loads(note['embedding'])
-        return note
-    return None
+    return _row_to_note(row) if row else None
 
-def get_all_notes(category: Optional[str] = None, tag: Optional[str] = None, user_id: Optional[int] = None) -> List[Dict[str, Any]]:
+
+def get_all_notes(
+    category: Optional[str] = None,
+    tag: Optional[str] = None,
+    user_id: Optional[int] = None,
+) -> List[Dict[str, Any]]:
     conn = get_db_connection()
-    cursor = conn.cursor()
-    
-    query = 'SELECT * FROM notes'
-    conditions = []
-    params = []
-    
-    if user_id is not None:
-        conditions.append('user_id = ?')
-        params.append(user_id)
-        
-    if category:
-        conditions.append('category = ?')
-        params.append(category)
-        
-    if conditions:
-        query += ' WHERE ' + ' AND '.join(conditions)
-        
-    query += ' ORDER BY created_at DESC'
-    
-    cursor.execute(query, params)
-    rows = cursor.fetchall()
-    conn.close()
-    
-    notes = []
-    for row in rows:
-        note = dict(row)
-        note['tags'] = json.loads(note['tags']) if note['tags'] else []
-        if note['embedding']:
-            note['embedding'] = json.loads(note['embedding'])
-        
-        # If tag filter is specified, filter in python (since it's a JSON array in SQLite)
-        if tag and tag not in note['tags']:
-            continue
-            
-        notes.append(note)
-        
-    return notes
+    cursor = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
 
-def search_notes_semantic(query_embedding: List[float], limit: int = 5, user_id: Optional[int] = None) -> List[Dict[str, Any]]:
-    """Retrieves all notes and ranks them by cosine similarity to the query embedding."""
+    # Build query dynamically — we never fetch the embedding column here
+    # so that we don't waste bandwidth moving 768-float arrays to Python
+    conditions: List[str] = []
+    params: List[Any] = []
+
+    if user_id is not None:
+        conditions.append("user_id = %s")
+        params.append(user_id)
+
+    if category:
+        conditions.append("category = %s")
+        params.append(category)
+
+    if tag:
+        # Use PostgreSQL JSONB contains operator to filter by tag value
+        conditions.append("tags @> %s::jsonb")
+        params.append(json.dumps([tag]))
+
+    where_clause = ("WHERE " + " AND ".join(conditions)) if conditions else ""
+
+    # NOTE: We DO select the embedding column here so that the RAG pipeline
+    # (generate_rag_answer / generate_weekly_digest) can access note content
+    # without a second round-trip to the database.
+    cursor.execute(
+        f"""
+        SELECT id, content, url, summary, category, tags, user_id, created_at
+        FROM notes
+        {where_clause}
+        ORDER BY created_at DESC;
+        """,
+        params,
+    )
+    rows = cursor.fetchall()
+    cursor.close()
+    conn.close()
+    return [_row_to_note(r) for r in rows]
+
+
+def search_notes_semantic(
+    query_embedding: List[float], limit: int = 5, user_id: Optional[int] = None
+) -> List[Dict[str, Any]]:
+    """
+    Uses pgvector's native cosine distance operator (<=>)  to rank notes by
+    semantic similarity entirely inside PostgreSQL — no Python-side maths needed.
+    """
     if not query_embedding:
         return []
-        
-    notes = get_all_notes(user_id=user_id)
-    scored_notes = []
-    
-    for note in notes:
-        if not note.get('embedding'):
-            continue
-        similarity = cosine_similarity(query_embedding, note['embedding'])
-        # Add similarity score to output note metadata
-        note_copy = note.copy()
-        # Remove raw embedding from return value to save bandwidth
-        note_copy.pop('embedding', None)
-        note_copy['similarity'] = similarity
-        scored_notes.append(note_copy)
-        
-    # Sort by similarity score descending
-    scored_notes.sort(key=lambda x: x['similarity'], reverse=True)
-    return scored_notes[:limit]
+
+    embedding_str = "[" + ",".join(str(x) for x in query_embedding) + "]"
+
+    conn = get_db_connection()
+    cursor = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+
+    user_filter = "AND user_id = %s" if user_id is not None else ""
+    params: List[Any] = [embedding_str]
+    if user_id is not None:
+        params.append(user_id)
+    params.append(embedding_str)
+    params.append(limit)
+
+    cursor.execute(
+        f"""
+        SELECT
+            id, content, url, summary, category, tags, user_id, created_at,
+            1 - (embedding <=> %s::vector) AS similarity
+        FROM notes
+        WHERE embedding IS NOT NULL
+        {user_filter}
+        ORDER BY embedding <=> %s::vector ASC
+        LIMIT %s;
+        """,
+        params,
+    )
+    rows = cursor.fetchall()
+    cursor.close()
+    conn.close()
+
+    results = []
+    for row in rows:
+        note = _row_to_note(row)
+        note["similarity"] = float(note.get("similarity", 0))
+        results.append(note)
+    return results
+
 
 def delete_note(note_id: int) -> bool:
     conn = get_db_connection()
     cursor = conn.cursor()
-    cursor.execute('DELETE FROM notes WHERE id = ?', (note_id,))
+    cursor.execute("DELETE FROM notes WHERE id = %s;", (note_id,))
     deleted = cursor.rowcount > 0
     conn.commit()
+    cursor.close()
     conn.close()
     return deleted
+
+
+# ---------------------------------------------------------------------------
+# Reminder Operations
+# ---------------------------------------------------------------------------
 
 def save_reminder(note_id: int, reminder_date: str, message: str) -> int:
     conn = get_db_connection()
     cursor = conn.cursor()
-    cursor.execute('''
+    cursor.execute(
+        """
         INSERT INTO reminders (note_id, reminder_date, message, status)
-        VALUES (?, ?, ?, 'pending')
-    ''', (note_id, reminder_date, message))
-    reminder_id = cursor.lastrowid
+        VALUES (%s, %s, %s, 'pending')
+        RETURNING id;
+        """,
+        (note_id, reminder_date, message),
+    )
+    reminder_id = cursor.fetchone()[0]
     conn.commit()
+    cursor.close()
     conn.close()
     return reminder_id
 
-def get_reminders(status: Optional[str] = None, user_id: Optional[int] = None) -> List[Dict[str, Any]]:
+
+def get_reminders(
+    status: Optional[str] = None, user_id: Optional[int] = None
+) -> List[Dict[str, Any]]:
     conn = get_db_connection()
-    cursor = conn.cursor()
-    
-    query = '''
-        SELECT r.*, n.content as note_content, n.category as note_category
+    cursor = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+
+    conditions: List[str] = []
+    params: List[Any] = []
+
+    if user_id is not None:
+        conditions.append("n.user_id = %s")
+        params.append(user_id)
+
+    if status:
+        conditions.append("r.status = %s")
+        params.append(status)
+
+    where_clause = ("WHERE " + " AND ".join(conditions)) if conditions else ""
+
+    cursor.execute(
+        f"""
+        SELECT r.id, r.note_id, r.reminder_date, r.message, r.status, r.created_at,
+               n.content AS note_content, n.category AS note_category
         FROM reminders r
         JOIN notes n ON r.note_id = n.id
-    '''
-    conditions = []
-    params = []
-    
-    if user_id is not None:
-        conditions.append('n.user_id = ?')
-        params.append(user_id)
-        
-    if status:
-        conditions.append('r.status = ?')
-        params.append(status)
-        
-    if conditions:
-        query += ' WHERE ' + ' AND '.join(conditions)
-        
-    query += ' ORDER BY r.reminder_date ASC'
-    
-    cursor.execute(query, params)
+        {where_clause}
+        ORDER BY r.reminder_date ASC;
+        """,
+        params,
+    )
     rows = cursor.fetchall()
+    cursor.close()
     conn.close()
-    
-    return [dict(row) for row in rows]
+
+    results = []
+    for row in rows:
+        r = dict(row)
+        if r.get("created_at") and not isinstance(r["created_at"], str):
+            r["created_at"] = r["created_at"].strftime("%Y-%m-%d %H:%M:%S")
+        results.append(r)
+    return results
+
 
 def update_reminder_status(reminder_id: int, status: str) -> bool:
     conn = get_db_connection()
     cursor = conn.cursor()
-    cursor.execute('UPDATE reminders SET status = ? WHERE id = ?', (status, reminder_id))
+    cursor.execute(
+        "UPDATE reminders SET status = %s WHERE id = %s;", (status, reminder_id)
+    )
     updated = cursor.rowcount > 0
     conn.commit()
+    cursor.close()
     conn.close()
     return updated
-

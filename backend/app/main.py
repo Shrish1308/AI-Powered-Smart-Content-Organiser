@@ -5,17 +5,17 @@ from pydantic import BaseModel
 from typing import List, Optional, Dict, Any
 
 from app.database import (
-    init_db, save_note, get_all_notes, get_note, delete_note, 
+    init_db, save_note, get_all_notes, get_note, delete_note,
     search_notes_semantic, get_reminders, update_reminder_status,
     create_user, authenticate_user, get_user_by_session, delete_session
 )
 from app.gemini_service import (
-    analyze_note, get_embedding, generate_rag_answer, 
+    analyze_note, get_embedding, generate_rag_answer,
     generate_weekly_digest, summarize_link
 )
 from app.reminder_service import process_note_for_reminders
 
-app = FastAPI(title="SmartRecall API", description="AI-powered Knowledge App Backend")
+app = FastAPI(title="SmartRecall API", description="AI-powered Knowledge App Backend (Supabase + pgvector)")
 
 # Enable CORS for frontend requests
 app.add_middleware(

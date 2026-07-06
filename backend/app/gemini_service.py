@@ -84,28 +84,29 @@ def get_mock_tags_and_category(text: str) -> Dict[str, Any]:
 
 
 def get_mock_embedding(text: str) -> List[float]:
-    """Generates a deterministic 768-dim float vector for a given text using hashing.
-    This allows semantic search to behave consistently even in mock mode.
+    """Generates a deterministic 3072-dim float vector for a given text using hashing.
+    Matches the real dimension of gemini-embedding-001 so mock mode and
+    production mode are always compatible with the same database column.
     """
-    vector = [0.0] * 768
+    vector = [0.0] * 3072
     # Clean and split text to get unique terms
     words = re.findall(r'\w+', text.lower())
     if not words:
         words = ["empty"]
-        
+
     # Generate components of the vector based on word hashes
     for word in words:
         h = hashlib.sha256(word.encode('utf-8')).hexdigest()
         # Derive coordinates from hex chunks
-        for i in range(12): # Use hash parts to populate parts of the vector
-            idx = int(h[i*2:(i+1)*2], 16) % 768
+        for i in range(12):  # Use hash parts to populate parts of the vector
+            idx = int(h[i*2:(i+1)*2], 16) % 3072
             vector[idx] += 1.0
-            
+
     # Normalize vector to unit length
-    magnitude = math_sqrt = sum(x * x for x in vector) ** 0.5
+    magnitude = sum(x * x for x in vector) ** 0.5
     if magnitude > 0:
         vector = [x / magnitude for x in vector]
-        
+
     return vector
 
 
