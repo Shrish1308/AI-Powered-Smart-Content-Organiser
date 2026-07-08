@@ -7,8 +7,9 @@ from typing import List, Optional, Dict, Any
 from app.database import (
     init_db, save_note, get_all_notes, get_note, delete_note,
     search_notes_semantic, get_reminders, update_reminder_status,
-    create_user, authenticate_user, get_user_by_session, delete_session
+    create_user, get_user_by_username
 )
+from app.auth import verify_password, create_access_token, decode_access_token
 from app.gemini_service import (
     analyze_note, get_embedding, generate_rag_answer,
     generate_weekly_digest, summarize_link
@@ -46,21 +47,21 @@ class UserAuth(BaseModel):
     username: str
     password: str
 
-# Helper to get current user from session token
+# Helper to get current user from JWT token — zero DB round-trip
 def get_current_user(authorization: Optional[str] = Header(None)) -> int:
     if not authorization:
         raise HTTPException(status_code=401, detail="Missing authorization header")
+    parts = authorization.split()
+    if len(parts) != 2 or parts[0].lower() != "bearer":
+        raise HTTPException(status_code=401, detail="Invalid authorization header format")
+    token = parts[1]
+    payload = decode_access_token(token)
+    if not payload:
+        raise HTTPException(status_code=401, detail="Token expired or invalid — please log in again")
     try:
-        parts = authorization.split()
-        if len(parts) != 2 or parts[0].lower() != "bearer":
-            raise HTTPException(status_code=401, detail="Invalid authorization header format")
-        token = parts[1]
-        user_id = get_user_by_session(token)
-        if not user_id:
-            raise HTTPException(status_code=401, detail="Session expired or invalid")
-        return user_id
-    except Exception:
-        raise HTTPException(status_code=401, detail="Invalid token")
+        return int(payload["sub"])
+    except (KeyError, ValueError):
+        raise HTTPException(status_code=401, detail="Malformed token")
 
 # Helper to check if string is a URL
 def is_url(text: str) -> bool:
@@ -88,6 +89,8 @@ def register_user(auth_data: UserAuth):
     password = auth_data.password.strip()
     if not username or not password:
         raise HTTPException(status_code=400, detail="Username and password cannot be empty")
+    if len(password) < 6:
+        raise HTTPException(status_code=400, detail="Password must be at least 6 characters")
     user_id = create_user(username, password)
     if not user_id:
         raise HTTPException(status_code=400, detail="Username already exists")
@@ -97,17 +100,16 @@ def register_user(auth_data: UserAuth):
 def login_user(auth_data: UserAuth):
     username = auth_data.username.strip()
     password = auth_data.password.strip()
-    token = authenticate_user(username, password)
-    if not token:
+    user = get_user_by_username(username)
+    if not user or not verify_password(password, user["password_hash"]):
         raise HTTPException(status_code=401, detail="Invalid username or password")
+    token = create_access_token(user_id=user["id"], username=user["username"])
     return {"success": True, "token": token, "username": username}
 
 @app.post("/api/auth/logout")
-def logout_user(authorization: Optional[str] = Header(None)):
-    if authorization:
-        parts = authorization.split()
-        if len(parts) == 2 and parts[0].lower() == "bearer":
-            delete_session(parts[1])
+def logout_user():
+    # JWT is stateless — logout is handled client-side by discarding the token.
+    # No server-side session to delete.
     return {"success": True}
 
 

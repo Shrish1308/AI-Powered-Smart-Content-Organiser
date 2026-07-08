@@ -6,3 +6,5 @@ google-generativeai
 requests
 beautifulsoup4
 psycopg2-binary
+bcrypt
+python-jose[cryptography]

@@ -1,12 +1,12 @@
 import json
 import os
-import hashlib
-import secrets
 from typing import List, Dict, Any, Optional
 
 import psycopg2
 import psycopg2.extras
 from dotenv import load_dotenv
+
+from app.auth import hash_password, verify_password
 
 load_dotenv()
 
@@ -50,14 +50,9 @@ def init_db():
         );
     """)
 
-    # Sessions table
-    cursor.execute("""
-        CREATE TABLE IF NOT EXISTS sessions (
-            token TEXT PRIMARY KEY,
-            user_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
-            created_at TIMESTAMPTZ DEFAULT NOW()
-        );
-    """)
+    # NOTE: No sessions table — authentication is stateless via JWT.
+    # Tokens are signed with JWT_SECRET_KEY and verified on every request
+    # without any database round-trip.
 
     # Notes table — embedding stored as native vector(3072) for pgvector
     # gemini-embedding-001 returns 3072-dimensional vectors by default
@@ -141,27 +136,14 @@ def init_db():
 # ---------------------------------------------------------------------------
 # Auth Helpers
 # ---------------------------------------------------------------------------
-
-def hash_password(password: str, salt: str = None) -> str:
-    if not salt:
-        salt = secrets.token_hex(8)
-    pw_hash = hashlib.sha256((password + salt).encode("utf-8")).hexdigest()
-    return f"{salt}:{pw_hash}"
-
-
-def verify_password(password: str, hashed_password: str) -> bool:
-    try:
-        salt, pw_hash = hashed_password.split(":")
-        new_hash = hashlib.sha256((password + salt).encode("utf-8")).hexdigest()
-        return new_hash == pw_hash
-    except Exception:
-        return False
-
+# Password hashing (bcrypt) and JWT utilities live in app/auth.py.
+# database.py only handles the DB side: storing/looking up users.
 
 def create_user(username: str, password: str) -> Optional[int]:
+    """Creates a new user with a bcrypt-hashed password. Returns user_id or None if username taken."""
     conn = get_db_connection()
     cursor = conn.cursor()
-    password_hash = hash_password(password)
+    password_hash = hash_password(password)  # bcrypt via auth.py
     try:
         cursor.execute(
             "INSERT INTO users (username, password_hash) VALUES (%s, %s) RETURNING id;",
@@ -178,50 +160,18 @@ def create_user(username: str, password: str) -> Optional[int]:
         conn.close()
 
 
-def authenticate_user(username: str, password: str) -> Optional[str]:
+def get_user_by_username(username: str) -> Optional[Dict[str, Any]]:
+    """Fetches a user row by username. Returns dict with id, username, password_hash or None."""
     conn = get_db_connection()
     cursor = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
     cursor.execute(
-        "SELECT id, password_hash FROM users WHERE username = %s;", (username,)
+        "SELECT id, username, password_hash FROM users WHERE username = %s;",
+        (username,),
     )
     row = cursor.fetchone()
-
-    if row and verify_password(password, row["password_hash"]):
-        user_id = row["id"]
-        token = secrets.token_hex(24)
-        cursor.execute(
-            "INSERT INTO sessions (token, user_id) VALUES (%s, %s);",
-            (token, user_id),
-        )
-        conn.commit()
-        cursor.close()
-        conn.close()
-        return token
-
     cursor.close()
     conn.close()
-    return None
-
-
-def get_user_by_session(token: str) -> Optional[int]:
-    conn = get_db_connection()
-    cursor = conn.cursor()
-    cursor.execute("SELECT user_id FROM sessions WHERE token = %s;", (token,))
-    row = cursor.fetchone()
-    cursor.close()
-    conn.close()
-    return row[0] if row else None
-
-
-def delete_session(token: str) -> bool:
-    conn = get_db_connection()
-    cursor = conn.cursor()
-    cursor.execute("DELETE FROM sessions WHERE token = %s;", (token,))
-    deleted = cursor.rowcount > 0
-    conn.commit()
-    cursor.close()
-    conn.close()
-    return deleted
+    return dict(row) if row else None
 
 
 # ---------------------------------------------------------------------------
