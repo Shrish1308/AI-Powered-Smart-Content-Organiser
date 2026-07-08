@@ -6,7 +6,7 @@ import psycopg2
 import psycopg2.extras
 from dotenv import load_dotenv
 
-from app.auth import hash_password, verify_password
+from app.auth import hash_password
 
 load_dotenv()
 
@@ -278,9 +278,9 @@ def get_all_notes(
 
     where_clause = ("WHERE " + " AND ".join(conditions)) if conditions else ""
 
-    # NOTE: We DO select the embedding column here so that the RAG pipeline
-    # (generate_rag_answer / generate_weekly_digest) can access note content
-    # without a second round-trip to the database.
+    # embedding is intentionally excluded from this query — it's large (3072 floats)
+    # and not needed for list/digest views. Semantic search has its own dedicated
+    # search_notes_semantic() which selects embedding only when comparing vectors.
     cursor.execute(
         f"""
         SELECT id, content, url, summary, category, tags, user_id, created_at

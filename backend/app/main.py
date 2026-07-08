@@ -91,6 +91,8 @@ def register_user(auth_data: UserAuth):
         raise HTTPException(status_code=400, detail="Username and password cannot be empty")
     if len(password) < 6:
         raise HTTPException(status_code=400, detail="Password must be at least 6 characters")
+    if len(password.encode("utf-8")) > 72:
+        raise HTTPException(status_code=400, detail="Password must be 72 characters or fewer")
     user_id = create_user(username, password)
     if not user_id:
         raise HTTPException(status_code=400, detail="Username already exists")
@@ -246,12 +248,11 @@ def list_all_reminders(
 
 @app.post("/api/reminders/{reminder_id}/complete")
 def complete_reminder(reminder_id: int, current_user: int = Depends(get_current_user)):
-    # Verify that the reminder belongs to a note owned by current_user
+    # Verify ownership: check that this reminder belongs to a note owned by current_user
     reminders = get_reminders(user_id=current_user)
-    reminder_ids = [r["id"] for r in reminders]
-    if reminder_id not in reminder_ids:
+    if not any(r["id"] == reminder_id for r in reminders):
         raise HTTPException(status_code=404, detail="Reminder not found")
-        
+
     success = update_reminder_status(reminder_id, "completed")
     if not success:
         raise HTTPException(status_code=404, detail="Reminder not found")

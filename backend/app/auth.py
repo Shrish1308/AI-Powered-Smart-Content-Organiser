@@ -35,11 +35,12 @@ BCRYPT_ROUNDS = 12  # work factor: higher = slower hash = harder to brute-force
 def hash_password(password: str) -> str:
     """
     Hashes a password with bcrypt (12 rounds, built-in random salt).
-    bcrypt limits passwords to 72 bytes; passwords longer than that are
-    pre-hashed with SHA-256 to avoid silent truncation.
+    bcrypt has a hard 72-byte limit — passwords longer than that are rejected
+    here with a clear ValueError rather than silently truncated or crashing.
     """
-    # Pre-hash to handle passwords > 72 bytes safely
     password_bytes = password.encode("utf-8")
+    if len(password_bytes) > 72:
+        raise ValueError("Password must be 72 characters or fewer.")
     salt = bcrypt.gensalt(rounds=BCRYPT_ROUNDS)
     hashed = bcrypt.hashpw(password_bytes, salt)
     return hashed.decode("utf-8")
