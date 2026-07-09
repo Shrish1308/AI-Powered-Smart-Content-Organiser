@@ -66,7 +66,7 @@ const AnimatedShimmerLine = ({ width = '100%', height = 14, style = {} }) => {
   );
 };
 
-export default function HomeScreen() {
+export default function HomeScreen({ notificationTarget, onNotificationTargetCleared }) {
   const { signOut, userToken, username } = useContext(AuthContext);
   const [activeTab, setActiveTab] = useState('dashboard');
   const [notes, setNotes] = useState([]);
@@ -109,6 +109,11 @@ export default function HomeScreen() {
   const [shareText, setShareText] = useState('');
   const [shareSaving, setShareSaving] = useState(false);
 
+  // In-app notification banner (due reminders, works on web + native)
+  const [dueNotifications, setDueNotifications] = useState([]);
+  const [currentBannerIndex, setCurrentBannerIndex] = useState(0);
+  const bannerAnim = useRef(new Animated.Value(-120)).current;
+
   // Expo Share Intent Hook (mobile-only, may not be installed)
   let shareIntentResult = { hasShareIntent: false, shareIntent: null, resetShareIntent: () => {}, error: null };
   if (useShareIntent) {
@@ -132,6 +137,7 @@ export default function HomeScreen() {
     fetchNotes();
     fetchReminders();
     fetchWeeklyDigest();
+    fetchDueNotifications();
   }, [userToken]);
 
   const checkBackendHealth = async () => {
@@ -209,6 +215,80 @@ export default function HomeScreen() {
     } finally {
       setFetchingDigest(false);
     }
+  };
+
+  // ── In-App Notification Banner ──────────────────────────────────────────
+
+  // useNativeDriver must be false on web (react-native-web doesn't support
+  // native driver for position:absolute translateY animations)
+  const NATIVE_DRIVER = Platform.OS !== 'web';
+
+  const showBannerAnimation = () => {
+    bannerAnim.setValue(-120);
+    Animated.spring(bannerAnim, {
+      toValue: 0,
+      useNativeDriver: NATIVE_DRIVER,
+      tension: 65,
+      friction: 11,
+    }).start();
+  };
+
+  const fetchDueNotifications = async () => {
+    if (!userToken) return;
+    try {
+      const response = await fetch(`${API_BASE_URL}/api/notifications/due`, {
+        headers: { Authorization: `Bearer ${userToken}` },
+      });
+      console.log('[SmartRecall] /api/notifications/due status:', response.status);
+      if (!response.ok) return;
+      const data = await response.json();
+      console.log('[SmartRecall] Due notifications from API:', JSON.stringify(data));
+      if (data && data.length > 0) {
+        setDueNotifications(data);
+        setCurrentBannerIndex(0);
+        showBannerAnimation();
+      } else {
+        console.log('[SmartRecall] No due reminders today — banner will not appear.');
+      }
+    } catch (error) {
+      console.log('[SmartRecall] Could not fetch due notifications (offline):', error);
+    }
+  };
+
+  // Call this to test the banner UI without needing real DB data
+  const testBannerNotification = () => {
+    const mockReminder = [{
+      id: 0,
+      message: '🧪 Test: This is how a reminder banner looks! Dismiss me →',
+      reminder_date: new Date().toISOString().split('T')[0],
+      note_content: 'Test note',
+      status: 'pending',
+    }];
+    setDueNotifications(mockReminder);
+    setCurrentBannerIndex(0);
+    showBannerAnimation();
+  };
+
+  const dismissNotificationBanner = () => {
+    Animated.timing(bannerAnim, {
+      toValue: -120,
+      duration: 280,
+      useNativeDriver: NATIVE_DRIVER,
+    }).start(() => {
+      const nextIndex = currentBannerIndex + 1;
+      if (nextIndex < dueNotifications.length) {
+        setCurrentBannerIndex(nextIndex);
+        bannerAnim.setValue(-120);
+        Animated.spring(bannerAnim, {
+          toValue: 0,
+          useNativeDriver: NATIVE_DRIVER,
+          tension: 65,
+          friction: 11,
+        }).start();
+      } else {
+        setDueNotifications([]);
+      }
+    });
   };
 
   const handleSaveNote = async () => {
@@ -905,8 +985,16 @@ export default function HomeScreen() {
       <View style={styles.tabContent}>
         <View style={styles.reminderSectionHeader}>
           <Text style={styles.reminderSectionTitle}>Active Alerts</Text>
+          {/* Dev helper: tap to preview the notification banner UI */}
+          <TouchableOpacity
+            onPress={testBannerNotification}
+            style={{ flexDirection: 'row', alignItems: 'center', gap: 4, paddingVertical: 4, paddingHorizontal: 8, backgroundColor: 'rgba(245,158,11,0.1)', borderRadius: 8, borderWidth: 1, borderColor: 'rgba(245,158,11,0.25)' }}
+          >
+            <Ionicons name="notifications-outline" size={13} color="#f59e0b" />
+            <Text style={{ color: '#f59e0b', fontSize: 11, fontWeight: '600' }}>Test Banner</Text>
+          </TouchableOpacity>
         </View>
-        
+
         <FlatList
           data={reminders}
           keyExtractor={item => item.id.toString()}
@@ -1008,7 +1096,37 @@ export default function HomeScreen() {
     <SafeAreaView style={styles.container}>
       <StatusBar barStyle="light-content" backgroundColor="#0b0f19" />
       {renderHeader()}
-      
+
+      {/* ── In-App Notification Banner ─────────────────────────────────────────
+           Slides in from the top when reminders are due today.
+           Works on both web and native — no special permissions needed. */}
+      {dueNotifications.length > 0 && (
+        <Animated.View
+          style={[
+            styles.notificationBanner,
+            { transform: [{ translateY: bannerAnim }] },
+          ]}
+        >
+          <View style={styles.bannerIconContainer}>
+            <Ionicons name="notifications" size={18} color="#f59e0b" />
+          </View>
+          <View style={styles.bannerContent}>
+            <Text style={styles.bannerTitle}>⏰ Reminder Due</Text>
+            <Text style={styles.bannerMessage} numberOfLines={2}>
+              {dueNotifications[currentBannerIndex]?.message}
+            </Text>
+            {dueNotifications.length > 1 && (
+              <Text style={styles.bannerCount}>
+                {currentBannerIndex + 1} of {dueNotifications.length} reminders
+              </Text>
+            )}
+          </View>
+          <TouchableOpacity onPress={dismissNotificationBanner} style={styles.bannerDismiss}>
+            <Ionicons name="close" size={18} color="#94a3b8" />
+          </TouchableOpacity>
+        </Animated.View>
+      )}
+
       <View style={styles.mainArea}>
         {activeTab === 'dashboard' && renderDashboard()}
         {activeTab === 'library' && renderLibrary()}
@@ -1897,5 +2015,64 @@ const styles = StyleSheet.create({
     color: '#cbd5e1',
     fontSize: 12,
     lineHeight: 18,
+  },
+
+  // ── Notification Banner ──────────────────────────────────────────────────
+  notificationBanner: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    zIndex: 1000,
+    backgroundColor: 'rgba(20, 17, 55, 0.97)',
+    borderBottomWidth: 1,
+    borderBottomColor: 'rgba(245, 158, 11, 0.45)',
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 16,
+    paddingVertical: 14,
+    shadowColor: '#f59e0b',
+    shadowOffset: { width: 0, height: 6 },
+    shadowOpacity: 0.25,
+    shadowRadius: 12,
+    elevation: 12,
+  },
+  bannerIconContainer: {
+    width: 38,
+    height: 38,
+    borderRadius: 19,
+    backgroundColor: 'rgba(245, 158, 11, 0.12)',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginRight: 12,
+    borderWidth: 1,
+    borderColor: 'rgba(245, 158, 11, 0.3)',
+  },
+  bannerContent: {
+    flex: 1,
+    marginRight: 8,
+  },
+  bannerTitle: {
+    color: '#f59e0b',
+    fontSize: 11,
+    fontWeight: '700',
+    letterSpacing: 0.6,
+    textTransform: 'uppercase',
+    marginBottom: 3,
+  },
+  bannerMessage: {
+    color: '#e2e8f0',
+    fontSize: 13,
+    lineHeight: 18,
+  },
+  bannerCount: {
+    color: '#64748b',
+    fontSize: 10,
+    marginTop: 3,
+    fontStyle: 'italic',
+  },
+  bannerDismiss: {
+    padding: 6,
+    borderRadius: 8,
   },
 });

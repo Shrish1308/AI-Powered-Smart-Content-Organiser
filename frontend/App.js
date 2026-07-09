@@ -1,8 +1,8 @@
-import React, { useContext, useState } from 'react';
-import { 
-  StyleSheet, 
-  View, 
-  ActivityIndicator, 
+import React, { useContext, useState, useCallback } from 'react';
+import {
+  StyleSheet,
+  View,
+  ActivityIndicator,
   Text,
   StatusBar
 } from 'react-native';
@@ -11,10 +11,23 @@ import { AuthProvider, AuthContext } from './src/context/AuthContext';
 import LoginScreen from './src/screens/LoginScreen';
 import RegisterScreen from './src/screens/RegisterScreen';
 import HomeScreen from './src/screens/HomeScreen';
+import { usePushNotifications } from './src/hooks/usePushNotifications';
 
 function NavigationRouter() {
   const { userToken, isLoading } = useContext(AuthContext);
   const [authScreen, setAuthScreen] = useState('login'); // 'login' or 'register'
+  // Stores the note_id from a notification tap so HomeScreen can highlight it
+  const [notificationTarget, setNotificationTarget] = useState(null);
+
+  // Handle notification tap — navigate to the relevant note
+  const handleNotificationTap = useCallback((data) => {
+    if (data?.note_id) {
+      setNotificationTarget(data.note_id);
+    }
+  }, []);
+
+  // Register for push notifications once logged in
+  usePushNotifications(userToken, handleNotificationTap);
 
   // Splash/Loading screen on startup
   if (isLoading) {
@@ -40,7 +53,12 @@ function NavigationRouter() {
   }
 
   // Protected application workspace
-  return <HomeScreen />;
+  return (
+    <HomeScreen
+      notificationTarget={notificationTarget}
+      onNotificationTargetCleared={() => setNotificationTarget(null)}
+    />
+  );
 }
 
 export default function App() {

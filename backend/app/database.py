@@ -122,7 +122,23 @@ def init_db():
             reminder_date TEXT NOT NULL,
             message TEXT NOT NULL,
             status TEXT DEFAULT 'pending',
+            notified_at TIMESTAMPTZ,
             created_at TIMESTAMPTZ DEFAULT NOW()
+        );
+    """)
+
+    # Add notified_at to reminders if it was created before this migration
+    cursor.execute("""
+        ALTER TABLE reminders ADD COLUMN IF NOT EXISTS notified_at TIMESTAMPTZ;
+    """)
+
+    # Push tokens table — stores one Expo push token per user (UPSERT on update)
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS push_tokens (
+            id SERIAL PRIMARY KEY,
+            user_id INTEGER REFERENCES users(id) ON DELETE CASCADE UNIQUE,
+            token TEXT NOT NULL,
+            updated_at TIMESTAMPTZ DEFAULT NOW()
         );
     """)
 
@@ -172,6 +188,121 @@ def get_user_by_username(username: str) -> Optional[Dict[str, Any]]:
     cursor.close()
     conn.close()
     return dict(row) if row else None
+
+
+# ---------------------------------------------------------------------------
+# Push Token Operations
+# ---------------------------------------------------------------------------
+
+def save_push_token(user_id: int, token: str) -> None:
+    """Upserts an Expo push token for a user. One token per user — updated on re-register."""
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute(
+        """
+        INSERT INTO push_tokens (user_id, token, updated_at)
+        VALUES (%s, %s, NOW())
+        ON CONFLICT (user_id)
+        DO UPDATE SET token = EXCLUDED.token, updated_at = NOW();
+        """,
+        (user_id, token),
+    )
+    conn.commit()
+    cursor.close()
+    conn.close()
+
+
+def get_user_push_token(user_id: int) -> Optional[str]:
+    """Returns the stored Expo push token for a user, or None if not registered."""
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute(
+        "SELECT token FROM push_tokens WHERE user_id = %s;", (user_id,)
+    )
+    row = cursor.fetchone()
+    cursor.close()
+    conn.close()
+    return row[0] if row else None
+
+
+def get_due_reminders_with_tokens() -> List[Dict[str, Any]]:
+    """
+    Returns all pending reminders that are due today or earlier and have not been
+    push-notified yet, along with the user's Expo push token.
+    Used by the background scheduler in notification_service.py.
+    Uses the local server date (not UTC) so IST/other timezones work correctly.
+    """
+    from datetime import datetime
+    today_str = datetime.now().strftime("%Y-%m-%d")
+
+    conn = get_db_connection()
+    cursor = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+    cursor.execute(
+        """
+        SELECT
+            r.id, r.note_id, r.reminder_date, r.message, r.status,
+            n.user_id, n.content AS note_content,
+            pt.token AS push_token
+        FROM reminders r
+        JOIN notes n ON r.note_id = n.id
+        JOIN push_tokens pt ON pt.user_id = n.user_id
+        WHERE r.reminder_date <= %s
+          AND r.status = 'pending'
+          AND r.notified_at IS NULL;
+        """,
+        (today_str,),
+    )
+    rows = cursor.fetchall()
+    cursor.close()
+    conn.close()
+    return [dict(r) for r in rows]
+
+
+def mark_reminder_notified(reminder_id: int) -> None:
+    """Stamps notified_at on a reminder so the scheduler doesn't re-fire it."""
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute(
+        "UPDATE reminders SET notified_at = NOW() WHERE id = %s;", (reminder_id,)
+    )
+    conn.commit()
+    cursor.close()
+    conn.close()
+
+
+def get_due_reminders_for_user(user_id: int) -> List[Dict[str, Any]]:
+    """
+    Returns pending reminders due today or earlier for a specific user.
+    Used by the /api/notifications/due endpoint for in-app web banners.
+    Uses the local server date (not UTC) so IST/other timezones work correctly.
+    """
+    from datetime import datetime
+    today_str = datetime.now().strftime("%Y-%m-%d")
+
+    conn = get_db_connection()
+    cursor = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+    cursor.execute(
+        """
+        SELECT r.id, r.note_id, r.reminder_date, r.message, r.status, r.created_at,
+               n.content AS note_content, n.category AS note_category
+        FROM reminders r
+        JOIN notes n ON r.note_id = n.id
+        WHERE n.user_id = %s
+          AND r.reminder_date <= %s
+          AND r.status = 'pending';
+        """,
+        (user_id, today_str),
+    )
+    rows = cursor.fetchall()
+    cursor.close()
+    conn.close()
+    results = []
+    for row in rows:
+        r = dict(row)
+        if r.get("created_at") and not isinstance(r["created_at"], str):
+            r["created_at"] = r["created_at"].strftime("%Y-%m-%d %H:%M:%S")
+        results.append(r)
+    return results
 
 
 # ---------------------------------------------------------------------------

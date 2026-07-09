@@ -3,11 +3,13 @@ from fastapi import FastAPI, HTTPException, Query, Depends, Header
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from typing import List, Optional, Dict, Any
+from apscheduler.schedulers.background import BackgroundScheduler
 
 from app.database import (
     init_db, save_note, get_all_notes, get_note, delete_note,
     search_notes_semantic, get_reminders, update_reminder_status,
-    create_user, get_user_by_username
+    create_user, get_user_by_username,
+    save_push_token, get_due_reminders_for_user
 )
 from app.auth import verify_password, create_access_token, decode_access_token
 from app.gemini_service import (
@@ -15,6 +17,7 @@ from app.gemini_service import (
     generate_weekly_digest, summarize_link
 )
 from app.reminder_service import process_note_for_reminders
+from app.notification_service import send_due_reminder_notifications
 
 app = FastAPI(title="SmartRecall API", description="AI-powered Knowledge App Backend (Supabase + pgvector)")
 
@@ -27,10 +30,27 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Initialize database on startup
+# Initialize database and start background scheduler on startup
+_scheduler = BackgroundScheduler(timezone="UTC")
+
 @app.on_event("startup")
 def startup_event():
     init_db()
+    # Fire notification check immediately, then every hour
+    _scheduler.add_job(
+        send_due_reminder_notifications,
+        trigger="interval",
+        hours=1,
+        id="reminder_notifications",
+        replace_existing=True,
+    )
+    _scheduler.start()
+    print("🕐 Reminder notification scheduler started (runs every hour).")
+
+@app.on_event("shutdown")
+def shutdown_event():
+    if _scheduler.running:
+        _scheduler.shutdown(wait=False)
 
 # Pydantic Schemas
 class NoteCreate(BaseModel):
@@ -46,6 +66,9 @@ class ChatQuery(BaseModel):
 class UserAuth(BaseModel):
     username: str
     password: str
+
+class PushTokenRegister(BaseModel):
+    token: str
 
 # Helper to get current user from JWT token — zero DB round-trip
 def get_current_user(authorization: Optional[str] = Header(None)) -> int:
@@ -257,4 +280,35 @@ def complete_reminder(reminder_id: int, current_user: int = Depends(get_current_
     if not success:
         raise HTTPException(status_code=404, detail="Reminder not found")
     return {"success": True, "message": "Reminder marked as completed"}
+
+
+# ---------------------------------------------------------------------------
+# Push Notification Endpoints
+# ---------------------------------------------------------------------------
+
+@app.post("/api/push-token")
+def register_push_token(
+    token_data: PushTokenRegister,
+    current_user: int = Depends(get_current_user)
+):
+    """
+    Saves the device's Expo Push Token so the backend can send OS-level
+    push notifications when reminders become due.
+    """
+    token = token_data.token.strip()
+    if not token:
+        raise HTTPException(status_code=400, detail="Push token cannot be empty")
+    save_push_token(user_id=current_user, token=token)
+    print(f"🔔 Push token registered for user {current_user}")
+    return {"success": True, "message": "Push token registered"}
+
+
+@app.get("/api/notifications/due")
+def get_due_notifications(current_user: int = Depends(get_current_user)):
+    """
+    Returns reminders that are due today or overdue for the current user.
+    Used by the frontend for the in-app notification banner (works on web too).
+    """
+    due = get_due_reminders_for_user(user_id=current_user)
+    return due
 

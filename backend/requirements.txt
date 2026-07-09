@@ -8,3 +8,5 @@ beautifulsoup4
 psycopg2-binary
 bcrypt
 python-jose[cryptography]
+apscheduler
+httpx
