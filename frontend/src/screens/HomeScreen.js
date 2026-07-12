@@ -17,17 +17,22 @@ import {
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { AuthContext } from '../context/AuthContext';
-
-// Safe optional import — expo-share-intent is mobile-only and may not be installed
-let useShareIntent = null;
-try {
-  useShareIntent = require('expo-share-intent').useShareIntent;
-} catch (e) {
-  // Package not installed — share intent feature will be disabled
-}
+import { theme } from '../theme';
+import { Screen } from '../components/layout/Screen';
+import { Card } from '../components/cards/Card';
+import { Header } from '../components/layout/Header';
+import { SearchInput } from '../components/inputs/SearchInput';
+import { EmptyState } from '../components/feedback/EmptyState';
+import { MemoryCard } from '../components/cards/MemoryCard';
+import { ReminderCard } from '../components/cards/ReminderCard';
+import { ChatBubble } from '../components/chat/ChatBubble';
+import { ChatInput } from '../components/chat/ChatInput';
+import { ModalContainer } from '../components/layout/ModalContainer';
+import { ModalHeader } from '../components/layout/ModalHeader';
+import { BottomNavigation } from '../components/navigation/BottomNavigation';
 
 // FastAPI Backend URL - change if running on a physical mobile device
-const API_BASE_URL = 'http://localhost:8000';
+const API_BASE_URL = 'http://10.105.160.215:8000';
 
 // Shimmer Placeholders for Loading Animation
 const AnimatedShimmerLine = ({ width = '100%', height = 14, style = {} }) => {
@@ -56,8 +61,8 @@ const AnimatedShimmerLine = ({ width = '100%', height = 14, style = {} }) => {
         {
           width,
           height,
-          backgroundColor: 'rgba(255, 255, 255, 0.08)',
-          borderRadius: 4,
+          backgroundColor: theme.colors.glassBorder,
+          borderRadius: theme.radius.sm,
           opacity: animatedValue,
         },
         style,
@@ -103,34 +108,6 @@ export default function HomeScreen({ notificationTarget, onNotificationTargetCle
   const [loadingRelated, setLoadingRelated] = useState(false);
   const [selectedCategory, setSelectedCategory] = useState('All');
   const [selectedOrbitNote, setSelectedOrbitNote] = useState(null);
-
-  // Share Intent states
-  const [shareModalVisible, setShareModalVisible] = useState(false);
-  const [shareText, setShareText] = useState('');
-  const [shareSaving, setShareSaving] = useState(false);
-
-  // In-app notification banner (due reminders, works on web + native)
-  const [dueNotifications, setDueNotifications] = useState([]);
-  const [currentBannerIndex, setCurrentBannerIndex] = useState(0);
-  const bannerAnim = useRef(new Animated.Value(-120)).current;
-
-  // Expo Share Intent Hook (mobile-only, may not be installed)
-  let shareIntentResult = { hasShareIntent: false, shareIntent: null, resetShareIntent: () => {}, error: null };
-  if (useShareIntent) {
-    try {
-      shareIntentResult = useShareIntent();
-    } catch (e) {
-      console.log("Share intent hook error:", e);
-    }
-  }
-  const { hasShareIntent, shareIntent, resetShareIntent } = shareIntentResult;
-
-  useEffect(() => {
-    if (hasShareIntent && shareIntent && shareIntent.value) {
-      setShareText(shareIntent.value);
-      setShareModalVisible(true);
-    }
-  }, [hasShareIntent, shareIntent]);
 
   useEffect(() => {
     checkBackendHealth();
@@ -465,60 +442,6 @@ export default function HomeScreen({ notificationTarget, onNotificationTargetCle
     }
   };
 
-  const handleSaveSharedContent = async () => {
-    if (!shareText.trim()) return;
-    setShareSaving(true);
-    try {
-      const response = await fetch(`${API_BASE_URL}/api/notes`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${userToken}`
-        },
-        body: JSON.stringify({ content: shareText })
-      });
-      const data = await response.json();
-      if (data.success) {
-        setShareText('');
-        setShareModalVisible(false);
-        resetShareIntent();
-        fetchNotes();
-        fetchReminders();
-        fetchWeeklyDigest();
-        setNoteMessage({
-          text: `Shared note saved under category "${data.note.category}"!`,
-          type: 'success'
-        });
-        setTimeout(() => setNoteMessage({ text: '', type: '' }), 5000);
-      } else {
-        alert('Failed to save shared content.');
-      }
-    } catch (e) {
-      // Local fallback save simulation
-      const mockNewNote = {
-        id: Math.floor(Math.random() * 1000),
-        content: shareText,
-        category: 'Other',
-        tags: ['shared'],
-        created_at: '2026-06-14 12:00:00'
-      };
-      setNotes([mockNewNote, ...notes]);
-      setShareText('');
-      setShareModalVisible(false);
-      resetShareIntent();
-      setNoteMessage({ text: 'Shared content saved locally (Offline).', type: 'success' });
-      setTimeout(() => setNoteMessage({ text: '', type: '' }), 5000);
-    } finally {
-      setShareSaving(false);
-    }
-  };
-
-  const handleCancelShare = () => {
-    setShareText('');
-    setShareModalVisible(false);
-    resetShareIntent();
-  };
-
   const AIResponseShimmer = () => (
     <View style={[styles.chatBubble, styles.aiBubble, { width: '85%' }]}>
       <View style={styles.aiAvatar}>
@@ -651,21 +574,22 @@ export default function HomeScreen({ notificationTarget, onNotificationTargetCle
 
   // Render components
   const renderHeader = () => (
-    <View style={styles.header}>
-      <View>
-        <Text style={styles.logoText}>SmartRecall</Text>
-        <Text style={styles.subLogoText}>Hello, {username || 'User'}</Text>
-      </View>
-      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
-        <View style={styles.statusBadge}>
-          <View style={[styles.statusDot, { backgroundColor: systemStatus === 'Online' ? '#10b981' : '#f59e0b' }]} />
-          <Text style={styles.statusText}>{systemStatus}</Text>
+    <Header
+      title="SmartRecall"
+      subtitle={`Hello, ${username || 'User'}`}
+      style={styles.header}
+      rightElement={
+        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
+          <View style={styles.statusBadge}>
+            <View style={[styles.statusDot, { backgroundColor: systemStatus === 'Online' ? theme.colors.success : theme.colors.warning }]} />
+            <Text style={styles.statusText}>{systemStatus}</Text>
+          </View>
+          <TouchableOpacity style={styles.logoutButton} onPress={signOut}>
+            <Ionicons name="log-out-outline" size={18} color={theme.colors.error} />
+          </TouchableOpacity>
         </View>
-        <TouchableOpacity style={styles.logoutButton} onPress={signOut}>
-          <Ionicons name="log-out-outline" size={18} color="#f87171" />
-        </TouchableOpacity>
-      </View>
-    </View>
+      }
+    />
   );
 
   const renderDashboard = () => {
@@ -673,7 +597,7 @@ export default function HomeScreen({ notificationTarget, onNotificationTargetCle
     return (
       <ScrollView style={styles.tabContent} showsVerticalScrollIndicator={false}>
         {/* Quick Save Card */}
-        <View style={styles.glassCard}>
+        <Card variant="glass" style={{ marginBottom: theme.spacing[4], padding: 18 }}>
           <Text style={styles.cardTitle}>Auto-Organize Note or Link</Text>
           <TextInput
             style={styles.textInput}
@@ -712,10 +636,10 @@ export default function HomeScreen({ notificationTarget, onNotificationTargetCle
               </Text>
             </View>
           ) : null}
-        </View>
+        </Card>
 
         {/* Weekly Digest Expandable Card */}
-        <View style={styles.glassCard}>
+        <Card variant="glass" style={{ marginBottom: theme.spacing[4], padding: 18 }}>
           <TouchableOpacity 
             style={styles.digestHeader} 
             onPress={() => setDigestExpanded(!digestExpanded)}
@@ -741,10 +665,10 @@ export default function HomeScreen({ notificationTarget, onNotificationTargetCle
               </TouchableOpacity>
             </View>
           )}
-        </View>
+        </Card>
 
         {/* Upcoming Reminders Card */}
-        <View style={styles.glassCard}>
+        <Card variant="glass" style={{ marginBottom: theme.spacing[4], padding: 18 }}>
           <View style={styles.digestHeader}>
             <View style={{ flexDirection: 'row', alignItems: 'center' }}>
               <Ionicons name="alarm-outline" size={20} color="#f59e0b" style={{ marginRight: 8 }} />
@@ -755,23 +679,17 @@ export default function HomeScreen({ notificationTarget, onNotificationTargetCle
           
           {pendingReminders.length > 0 ? (
             pendingReminders.slice(0, 3).map((reminder) => (
-              <View key={reminder.id} style={styles.reminderItem}>
-                <View style={{ flex: 1 }}>
-                  <Text style={styles.reminderMsg}>{reminder.message}</Text>
-                  <Text style={styles.reminderDate}>Alert scheduled: {reminder.reminder_date}</Text>
-                </View>
-                <TouchableOpacity 
-                  style={styles.checkButton} 
-                  onPress={() => handleCompleteReminder(reminder.id)}
-                >
-                  <Ionicons name="checkmark-circle-outline" size={24} color="#10b981" />
-                </TouchableOpacity>
-              </View>
+              <ReminderCard 
+                key={reminder.id}
+                item={reminder}
+                onComplete={handleCompleteReminder}
+                variant="compact"
+              />
             ))
           ) : (
             <Text style={styles.emptyStateText}>No upcoming reminders found. Write a note mentioning a date to trigger a nudge!</Text>
           )}
-        </View>
+        </Card>
         <View style={{ height: 60 }} />
       </ScrollView>
     );
@@ -805,7 +723,7 @@ export default function HomeScreen({ notificationTarget, onNotificationTargetCle
 
         {loading ? (
           <View style={styles.loadingContainer}>
-            <ActivityIndicator size="large" color="#8b5cf6" />
+            <ActivityIndicator size="large" color={theme.colors.primary} />
           </View>
         ) : filteredNotes.length > 0 ? (
           <FlatList
@@ -814,30 +732,14 @@ export default function HomeScreen({ notificationTarget, onNotificationTargetCle
             contentContainerStyle={styles.notesList}
             showsVerticalScrollIndicator={false}
             renderItem={({ item }) => (
-              <TouchableOpacity style={styles.noteCard} onPress={() => handleViewNoteDetails(item)}>
-                <View style={styles.noteCardHeader}>
-                  <Text style={styles.noteCategoryBadge}>{item.category || 'General'}</Text>
-                  <Text style={styles.noteDateText}>{item.created_at ? item.created_at.split(' ')[0] : 'Today'}</Text>
-                </View>
-                <Text style={styles.noteTitle} numberOfLines={2}>{item.content}</Text>
-                {item.summary ? (
-                  <Text style={styles.noteSummaryText} numberOfLines={2}>{item.summary}</Text>
-                ) : null}
-                <View style={styles.tagsContainer}>
-                  {item.tags && item.tags.map(tag => (
-                    <View key={tag} style={styles.tagBadge}>
-                      <Text style={styles.tagBadgeText}>#{tag}</Text>
-                    </View>
-                  ))}
-                </View>
-              </TouchableOpacity>
+              <MemoryCard item={item} onPress={() => handleViewNoteDetails(item)} />
             )}
           />
         ) : (
-          <View style={styles.emptyState}>
-            <Ionicons name="folder-open-outline" size={48} color="#475569" />
-            <Text style={styles.emptyStateText}>No notes found in "{selectedCategory}" category.</Text>
-          </View>
+          <EmptyState 
+            iconName="folder-open-outline" 
+            message={`No notes found in "${selectedCategory}" category.`} 
+          />
         )}
       </View>
     );
@@ -846,23 +748,13 @@ export default function HomeScreen({ notificationTarget, onNotificationTargetCle
   const renderSearch = () => {
     return (
       <View style={styles.tabContent}>
-        <View style={styles.searchBarContainer}>
-          <TextInput
-            style={styles.searchBarInput}
-            placeholder="Search notes semantically (e.g. 'python references')..."
-            placeholderTextColor="#64748b"
-            value={searchQuery}
-            onChangeText={setSearchQuery}
-            onSubmitEditing={handleSearch}
-          />
-          <TouchableOpacity style={styles.searchButton} onPress={handleSearch} disabled={searching}>
-            {searching ? (
-              <ActivityIndicator color="#fff" size="small" />
-            ) : (
-              <Ionicons name="search" size={20} color="#fff" />
-            )}
-          </TouchableOpacity>
-        </View>
+        <SearchInput
+          placeholder="Search notes semantically (e.g. 'python references')..."
+          value={searchQuery}
+          onChangeText={setSearchQuery}
+          onSubmitEditing={handleSearch}
+          searching={searching}
+        />
 
         {searchResults.length > 0 ? (
           <FlatList
@@ -871,33 +763,35 @@ export default function HomeScreen({ notificationTarget, onNotificationTargetCle
             contentContainerStyle={styles.notesList}
             showsVerticalScrollIndicator={false}
             renderItem={({ item }) => (
-              <TouchableOpacity style={styles.noteCard} onPress={() => handleViewNoteDetails(item)}>
-                <View style={styles.noteCardHeader}>
-                  <Text style={styles.noteCategoryBadge}>{item.category}</Text>
-                  <View style={styles.similarityScoreBadge}>
-                    <Ionicons name="analytics" size={12} color="#10b981" style={{ marginRight: 4 }} />
-                    <Text style={styles.similarityScoreText}>
-                      {Math.round(item.similarity * 100)}% match
-                    </Text>
-                  </View>
-                </View>
-                <Text style={styles.noteTitle} numberOfLines={2}>{item.content}</Text>
-                {item.summary ? (
-                  <Text style={styles.noteSummaryText} numberOfLines={2}>{item.summary}</Text>
-                ) : null}
-                <View style={styles.tagsContainer}>
-                  {item.tags && item.tags.map(tag => (
-                    <View key={tag} style={styles.tagBadge}>
-                      <Text style={styles.tagBadgeText}>#{tag}</Text>
+              <TouchableOpacity onPress={() => handleViewNoteDetails(item)}>
+                <Card variant="flat" style={styles.noteCard}>
+                  <View style={styles.noteCardHeader}>
+                    <Text style={styles.noteCategoryBadge}>{item.category}</Text>
+                    <View style={styles.similarityScoreBadge}>
+                      <Ionicons name="analytics" size={12} color={theme.colors.success} style={{ marginRight: 4 }} />
+                      <Text style={styles.similarityScoreText}>
+                        {Math.round(item.similarity * 100)}% match
+                      </Text>
                     </View>
-                  ))}
-                </View>
+                  </View>
+                  <Text style={styles.noteTitle} numberOfLines={2}>{item.content}</Text>
+                  {item.summary ? (
+                    <Text style={styles.noteSummaryText} numberOfLines={2}>{item.summary}</Text>
+                  ) : null}
+                  <View style={styles.tagsContainer}>
+                    {item.tags && item.tags.map(tag => (
+                      <View key={tag} style={styles.tagBadge}>
+                        <Text style={styles.tagBadgeText}>#{tag}</Text>
+                      </View>
+                    ))}
+                  </View>
+                </Card>
               </TouchableOpacity>
             )}
           />
         ) : (
           <View style={styles.emptyState}>
-            <Ionicons name="search-outline" size={48} color="#475569" />
+            <Ionicons name="search-outline" size={48} color={theme.colors.textTertiary} />
             <Text style={styles.emptyStateText}>
               {searchQuery ? "No matching notes found." : "Search by meaning. Gemini embeddings find matches even without exact keyword matches!"}
             </Text>
@@ -925,16 +819,7 @@ export default function HomeScreen({ notificationTarget, onNotificationTargetCle
           contentContainerStyle={styles.chatScroll}
           ListFooterComponent={chatting ? <AIResponseShimmer /> : null}
           renderItem={({ item }) => (
-            <View style={[styles.chatBubble, item.sender === 'user' ? styles.userBubble : styles.aiBubble]}>
-              {item.sender === 'ai' && (
-                <View style={styles.aiAvatar}>
-                  <Ionicons name="sparkles" size={12} color="#8b5cf6" />
-                </View>
-              )}
-              <View style={[styles.chatTextContainer, item.sender === 'user' ? styles.userTextContainer : styles.aiTextContainer]}>
-                <Text style={styles.chatMessageText}>{item.message}</Text>
-              </View>
-            </View>
+            <ChatBubble item={item} />
           )}
         />
         
@@ -955,26 +840,13 @@ export default function HomeScreen({ notificationTarget, onNotificationTargetCle
           </View>
         )}
 
-        <View style={styles.chatInputContainer}>
-          <TextInput
-            style={styles.chatInput}
-            placeholder="Ask AI about notes (RAG Q&A)..."
-            placeholderTextColor="#64748b"
+        <View style={{ marginBottom: theme.spacing[4] }}>
+          <ChatInput
             value={chatQuery}
             onChangeText={setChatQuery}
-            onSubmitEditing={() => handleSendChatMessage()}
+            onSubmit={() => handleSendChatMessage()}
+            isLoading={chatting}
           />
-          <TouchableOpacity 
-            style={[styles.chatSendButton, chatQuery.trim() ? {} : styles.disabledSendButton]} 
-            onPress={() => handleSendChatMessage()}
-            disabled={chatting || !chatQuery.trim()}
-          >
-            {chatting ? (
-              <ActivityIndicator color="#fff" size="small" />
-            ) : (
-              <Ionicons name="send" size={16} color="#fff" />
-            )}
-          </TouchableOpacity>
         </View>
       </KeyboardAvoidingView>
     );
@@ -988,10 +860,10 @@ export default function HomeScreen({ notificationTarget, onNotificationTargetCle
           {/* Dev helper: tap to preview the notification banner UI */}
           <TouchableOpacity
             onPress={testBannerNotification}
-            style={{ flexDirection: 'row', alignItems: 'center', gap: 4, paddingVertical: 4, paddingHorizontal: 8, backgroundColor: 'rgba(245,158,11,0.1)', borderRadius: 8, borderWidth: 1, borderColor: 'rgba(245,158,11,0.25)' }}
+            style={{ flexDirection: 'row', alignItems: 'center', gap: theme.spacing[1], paddingVertical: theme.spacing[1], paddingHorizontal: theme.spacing[2], backgroundColor: theme.colors.warningSubtle, borderRadius: theme.radius.sm, borderWidth: 1, borderColor: theme.colors.warningOverlay }}
           >
-            <Ionicons name="notifications-outline" size={13} color="#f59e0b" />
-            <Text style={{ color: '#f59e0b', fontSize: 11, fontWeight: '600' }}>Test Banner</Text>
+            <Ionicons name="notifications-outline" size={13} color={theme.colors.warning} />
+            <Text style={{ color: theme.colors.warning, fontSize: 11, fontWeight: '600' }}>Test Banner</Text>
           </TouchableOpacity>
         </View>
 
@@ -1001,100 +873,24 @@ export default function HomeScreen({ notificationTarget, onNotificationTargetCle
           contentContainerStyle={styles.notesList}
           showsVerticalScrollIndicator={false}
           renderItem={({ item }) => (
-            <View style={[styles.reminderCard, item.status === 'completed' ? styles.completedReminderCard : {}]}>
-              <View style={{ flex: 1, marginRight: 10 }}>
-                <View style={styles.noteCardHeader}>
-                  <Text style={[styles.noteCategoryBadge, { backgroundColor: 'rgba(245, 158, 11, 0.15)', color: '#f59e0b' }]}>
-                    {item.note_category || 'Alert'}
-                  </Text>
-                  <Text style={styles.reminderDate}>Alert Date: {item.reminder_date}</Text>
-                </View>
-                <Text style={[styles.reminderContentText, item.status === 'completed' ? styles.lineThroughText : {}]}>
-                  {item.message}
-                </Text>
-              </View>
-              {item.status === 'pending' ? (
-                <TouchableOpacity 
-                  style={styles.completeReminderBtn} 
-                  onPress={() => handleCompleteReminder(item.id)}
-                >
-                  <Ionicons name="checkbox-outline" size={24} color="#10b981" />
-                </TouchableOpacity>
-              ) : (
-                <Ionicons name="checkmark-circle" size={24} color="#475569" />
-              )}
-            </View>
+            <ReminderCard 
+              item={item}
+              onComplete={handleCompleteReminder}
+            />
           )}
           ListEmptyComponent={
-            <View style={styles.emptyState}>
-              <Ionicons name="notifications-off-outline" size={48} color="#475569" />
-              <Text style={styles.emptyStateText}>No reminders scheduled yet.</Text>
-            </View>
+            <EmptyState 
+              iconName="notifications-off-outline" 
+              message="No reminders scheduled yet." 
+            />
           }
         />
       </View>
     );
   };
 
-  const renderShareModal = () => {
-    if (!shareModalVisible) return null;
-    return (
-      <View style={styles.overlayContainer}>
-        <View style={[styles.detailGlassCard, { height: Dimensions.get('window').height * 0.5 }]}>
-          <View style={styles.detailHeader}>
-            <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-              <Ionicons name="share-social-outline" size={20} color="#c084fc" style={{ marginRight: 8 }} />
-              <Text style={styles.cardTitle}>Incoming Share Content</Text>
-            </View>
-            <TouchableOpacity onPress={handleCancelShare}>
-              <Ionicons name="close" size={24} color="#94a3b8" />
-            </TouchableOpacity>
-          </View>
-          
-          <ScrollView style={styles.detailBody} showsVerticalScrollIndicator={false}>
-            <Text style={styles.detailLabel}>Verify or Edit Shared Content</Text>
-            <TextInput
-              style={[styles.textInput, { minHeight: 120 }]}
-              placeholder="Shared text/URL..."
-              placeholderTextColor="#64748b"
-              multiline
-              numberOfLines={6}
-              value={shareText}
-              onChangeText={setShareText}
-            />
-          </ScrollView>
-
-          <View style={{ flexDirection: 'row', gap: 12, marginTop: 12 }}>
-            <TouchableOpacity 
-              style={[styles.secondaryButton, { flex: 1, marginTop: 0, paddingVertical: 12 }]} 
-              onPress={handleCancelShare}
-            >
-              <Text style={[styles.secondaryButtonText, { color: '#94a3b8' }]}>Cancel</Text>
-            </TouchableOpacity>
-            
-            <TouchableOpacity 
-              style={[styles.primaryButton, { flex: 2 }]} 
-              onPress={handleSaveSharedContent}
-              disabled={shareSaving || !shareText.trim()}
-            >
-              {shareSaving ? (
-                <ActivityIndicator color="#fff" size="small" />
-              ) : (
-                <View style={styles.buttonInner}>
-                  <Ionicons name="sparkles" size={16} color="#fff" style={{ marginRight: 6 }} />
-                  <Text style={styles.primaryButtonText}>Save to SmartRecall</Text>
-                </View>
-              )}
-            </TouchableOpacity>
-          </View>
-        </View>
-      </View>
-    );
-  };
-
   return (
-    <SafeAreaView style={styles.container}>
-      <StatusBar barStyle="light-content" backgroundColor="#0b0f19" />
+    <Screen safeArea={true} keyboardAvoiding={false} style={styles.container}>
       {renderHeader()}
 
       {/* ── In-App Notification Banner ─────────────────────────────────────────
@@ -1137,16 +933,12 @@ export default function HomeScreen({ notificationTarget, onNotificationTargetCle
 
       {/* Detail Overlay / Modal */}
       {selectedNote && (
-        <View style={styles.overlayContainer}>
-          <View style={styles.detailGlassCard}>
-            <View style={styles.detailHeader}>
-              <Text style={styles.detailCategoryBadge}>{selectedNote.category}</Text>
-              <TouchableOpacity onPress={() => setSelectedNote(null)}>
-                <Ionicons name="close" size={24} color="#94a3b8" />
-              </TouchableOpacity>
-            </View>
-            
-            <ScrollView style={styles.detailBody} showsVerticalScrollIndicator={false}>
+        <ModalContainer style={{ height: Dimensions.get('window').height * 0.8 }}>
+          <ModalHeader onClose={() => setSelectedNote(null)}>
+            <Text style={styles.detailCategoryBadge}>{selectedNote.category}</Text>
+          </ModalHeader>
+          
+          <ScrollView style={styles.detailBody} showsVerticalScrollIndicator={false}>
               <Text style={styles.detailLabel}>Original Note</Text>
               <Text style={styles.detailContent}>{selectedNote.content}</Text>
               
@@ -1188,58 +980,15 @@ export default function HomeScreen({ notificationTarget, onNotificationTargetCle
               style={styles.deleteButton} 
               onPress={() => handleDeleteNote(selectedNote.id)}
             >
-              <Ionicons name="trash-outline" size={16} color="#f87171" style={{ marginRight: 6 }} />
+              <Ionicons name="trash-outline" size={16} color={theme.colors.error} style={{ marginRight: 6 }} />
               <Text style={styles.deleteButtonText}>Delete Note</Text>
             </TouchableOpacity>
-          </View>
-        </View>
+        </ModalContainer>
       )}
 
-      {renderShareModal()}
-
       {/* Navigation Tab Bar */}
-      <View style={styles.tabBar}>
-        <TouchableOpacity 
-          style={[styles.tabItem, activeTab === 'dashboard' ? styles.activeTabItem : {}]}
-          onPress={() => setActiveTab('dashboard')}
-        >
-          <Ionicons name="home" size={20} color={activeTab === 'dashboard' ? '#c084fc' : '#94a3b8'} />
-          <Text style={[styles.tabText, activeTab === 'dashboard' ? styles.activeTabText : {}]}>Home</Text>
-        </TouchableOpacity>
-
-        <TouchableOpacity 
-          style={[styles.tabItem, activeTab === 'library' ? styles.activeTabItem : {}]}
-          onPress={() => setActiveTab('library')}
-        >
-          <Ionicons name="grid" size={20} color={activeTab === 'library' ? '#c084fc' : '#94a3b8'} />
-          <Text style={[styles.tabText, activeTab === 'library' ? styles.activeTabText : {}]}>Library</Text>
-        </TouchableOpacity>
-
-        <TouchableOpacity 
-          style={[styles.tabItem, activeTab === 'search' ? styles.activeTabItem : {}]}
-          onPress={() => setActiveTab('search')}
-        >
-          <Ionicons name="search" size={20} color={activeTab === 'search' ? '#c084fc' : '#94a3b8'} />
-          <Text style={[styles.tabText, activeTab === 'search' ? styles.activeTabText : {}]}>Search</Text>
-        </TouchableOpacity>
-
-        <TouchableOpacity 
-          style={[styles.tabItem, activeTab === 'chat' ? styles.activeTabItem : {}]}
-          onPress={() => setActiveTab('chat')}
-        >
-          <Ionicons name="sparkles" size={20} color={activeTab === 'chat' ? '#c084fc' : '#94a3b8'} />
-          <Text style={[styles.tabText, activeTab === 'chat' ? styles.activeTabText : {}]}>AI Chat</Text>
-        </TouchableOpacity>
-
-        <TouchableOpacity 
-          style={[styles.tabItem, activeTab === 'reminders' ? styles.activeTabItem : {}]}
-          onPress={() => setActiveTab('reminders')}
-        >
-          <Ionicons name="alarm" size={20} color={activeTab === 'reminders' ? '#c084fc' : '#94a3b8'} />
-          <Text style={[styles.tabText, activeTab === 'reminders' ? styles.activeTabText : {}]}>Nudges</Text>
-        </TouchableOpacity>
-      </View>
-    </SafeAreaView>
+      <BottomNavigation activeTab={activeTab} onTabPress={setActiveTab} />
+    </Screen>
   );
 }
 
@@ -1252,55 +1001,44 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    paddingHorizontal: 20,
-    paddingVertical: 15,
+    paddingHorizontal: theme.spacing[5],
+    paddingVertical: theme.spacing[4],
     borderBottomWidth: 1,
-    borderBottomColor: 'rgba(255, 255, 255, 0.08)',
-    backgroundColor: 'rgba(11, 15, 25, 0.8)',
+    borderBottomColor: theme.colors.glassBorder,
+    backgroundColor: theme.colors.surfaceOverlay,
     ...Platform.select({
       web: {
-        paddingTop: 15,
+        paddingTop: theme.spacing[4],
       }
     })
-  },
-  logoText: {
-    fontSize: 22,
-    fontWeight: 'bold',
-    color: '#fff',
-    letterSpacing: 0.5,
-  },
-  subLogoText: {
-    fontSize: 11,
-    color: '#94a3b8',
-    marginTop: 2,
   },
   statusBadge: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: 'rgba(255, 255, 255, 0.05)',
-    paddingHorizontal: 10,
-    paddingVertical: 5,
-    borderRadius: 20,
+    backgroundColor: theme.colors.glassBorder,
+    paddingHorizontal: theme.spacing[2],
+    paddingVertical: theme.spacing[1],
+    borderRadius: theme.radius.xl,
     borderWidth: 1,
-    borderColor: 'rgba(255, 255, 255, 0.05)',
+    borderColor: theme.colors.glassBorder,
   },
   statusDot: {
     width: 6,
     height: 6,
     borderRadius: 3,
-    marginRight: 6,
+    marginRight: theme.spacing[1],
   },
   statusText: {
     fontSize: 11,
-    color: '#e2e8f0',
+    color: theme.colors.textPrimary,
     fontWeight: '500',
   },
   logoutButton: {
-    backgroundColor: 'rgba(239, 68, 68, 0.1)',
+    backgroundColor: theme.colors.errorSubtle || 'rgba(239, 68, 68, 0.15)', // fallback if missing
     borderWidth: 1,
-    borderColor: 'rgba(239, 68, 68, 0.2)',
-    padding: 8,
-    borderRadius: 10,
+    borderColor: theme.colors.errorOverlay,
+    padding: theme.spacing[2],
+    borderRadius: theme.radius.md,
   },
   mainArea: {
     flex: 1,
@@ -1310,37 +1048,37 @@ const styles = StyleSheet.create({
     padding: 16,
   },
   glassCard: {
-    backgroundColor: 'rgba(30, 41, 59, 0.45)',
-    borderRadius: 16,
+    backgroundColor: theme.colors.cardOverlay,
+    borderRadius: theme.radius.xl,
     padding: 18,
     borderWidth: 1,
-    borderColor: 'rgba(255, 255, 255, 0.08)',
-    marginBottom: 16,
+    borderColor: theme.colors.glassBorder,
+    marginBottom: theme.spacing[4],
   },
   cardTitle: {
     fontSize: 15,
     fontWeight: '600',
-    color: '#f8fafc',
-    marginBottom: 12,
+    color: theme.colors.textPrimary,
+    marginBottom: theme.spacing[3],
   },
   textInput: {
-    backgroundColor: 'rgba(15, 23, 42, 0.6)',
-    borderRadius: 10,
-    padding: 12,
-    color: '#fff',
+    backgroundColor: theme.colors.inputBackground || 'rgba(15, 23, 42, 0.6)',
+    borderRadius: theme.radius.md,
+    padding: theme.spacing[3],
+    color: theme.colors.textInverse,
     fontSize: 14,
     borderWidth: 1,
-    borderColor: 'rgba(255, 255, 255, 0.05)',
+    borderColor: theme.colors.glassBorder,
     textAlignVertical: 'top',
-    marginBottom: 12,
+    marginBottom: theme.spacing[3],
   },
   primaryButton: {
-    backgroundColor: '#8b5cf6',
-    borderRadius: 10,
-    paddingVertical: 12,
+    backgroundColor: theme.colors.primary,
+    borderRadius: theme.radius.md,
+    paddingVertical: theme.spacing[3],
     alignItems: 'center',
     justifyContent: 'center',
-    shadowColor: '#8b5cf6',
+    shadowColor: theme.colors.primary,
     shadowOffset: { width: 0, height: 4 },
     shadowOpacity: 0.25,
     shadowRadius: 10,
@@ -1350,25 +1088,25 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   disabledButton: {
-    backgroundColor: 'rgba(139, 92, 246, 0.4)',
+    backgroundColor: theme.colors.primaryDisabled || 'rgba(139, 92, 246, 0.4)',
     shadowOpacity: 0,
   },
   primaryButtonText: {
-    color: '#fff',
+    color: theme.colors.textInverse,
     fontSize: 14,
     fontWeight: '600',
   },
   secondaryButton: {
-    backgroundColor: 'rgba(255, 255, 255, 0.05)',
-    borderRadius: 8,
-    paddingVertical: 8,
+    backgroundColor: theme.colors.glassBorder,
+    borderRadius: theme.radius.sm,
+    paddingVertical: theme.spacing[2],
     alignItems: 'center',
     marginTop: 10,
     borderWidth: 1,
-    borderColor: 'rgba(255, 255, 255, 0.05)',
+    borderColor: theme.colors.glassBorder,
   },
   secondaryButtonText: {
-    color: '#c084fc',
+    color: theme.colors.secondary,
     fontSize: 12,
     fontWeight: '500',
   },
@@ -1377,26 +1115,26 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     marginTop: 12,
     padding: 10,
-    borderRadius: 8,
+    borderRadius: theme.radius.sm,
   },
   successBox: {
-    backgroundColor: 'rgba(16, 185, 129, 0.12)',
+    backgroundColor: theme.colors.successOverlay,
     borderWidth: 1,
-    borderColor: 'rgba(16, 185, 129, 0.2)',
+    borderColor: theme.colors.successOverlay,
   },
   errorBox: {
-    backgroundColor: 'rgba(239, 68, 68, 0.12)',
+    backgroundColor: theme.colors.errorOverlay,
     borderWidth: 1,
-    borderColor: 'rgba(239, 68, 68, 0.2)',
+    borderColor: theme.colors.errorOverlay,
   },
   successText: {
-    color: '#10b981',
+    color: theme.colors.success,
     fontSize: 12,
     fontWeight: '500',
     flex: 1,
   },
   errorText: {
-    color: '#f87171',
+    color: theme.colors.error,
     fontSize: 12,
     fontWeight: '500',
     flex: 1,
@@ -1860,34 +1598,7 @@ const styles = StyleSheet.create({
     fontSize: 13,
     fontWeight: '600',
   },
-  tabBar: {
-    flexDirection: 'row',
-    backgroundColor: 'rgba(15, 23, 42, 0.95)',
-    borderTopWidth: 1,
-    borderTopColor: 'rgba(255, 255, 255, 0.06)',
-    paddingVertical: 10,
-    justifyContent: 'space-around',
-    alignItems: 'center',
-  },
-  tabItem: {
-    alignItems: 'center',
-    justifyContent: 'center',
-    paddingVertical: 2,
-    flex: 1,
-  },
-  activeTabItem: {
-    // Subtle glow under active tab in web
-  },
-  tabText: {
-    fontSize: 10,
-    color: '#94a3b8',
-    marginTop: 4,
-    fontWeight: '500',
-  },
-  activeTabText: {
-    color: '#c084fc',
-    fontWeight: '600',
-  },
+
   orbitWrapper: {
     marginTop: 12,
   },

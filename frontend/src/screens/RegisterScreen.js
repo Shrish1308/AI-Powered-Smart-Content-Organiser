@@ -1,19 +1,14 @@
 import React, { useState, useContext } from 'react';
-import { 
-  StyleSheet, 
-  Text, 
-  View, 
-  TextInput, 
-  TouchableOpacity, 
-  ActivityIndicator, 
-  SafeAreaView, 
-  KeyboardAvoidingView,
-  Platform,
-  ScrollView,
-  StatusBar
-} from 'react-native';
+import { StyleSheet, Text, View, ScrollView } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { AuthContext } from '../context/AuthContext';
+
+import { theme } from '../theme';
+import { Screen } from '../components/layout/Screen';
+import { Card } from '../components/cards/Card';
+import { TextInputBase } from '../components/inputs/TextInputBase';
+import { Button } from '../components/buttons/Button';
+import { StatusMessage } from '../components/feedback/StatusMessage';
 
 export default function RegisterScreen({ onToggleAuth }) {
   const { signUp } = useContext(AuthContext);
@@ -54,256 +49,108 @@ export default function RegisterScreen({ onToggleAuth }) {
   };
 
   return (
-    <SafeAreaView style={styles.container}>
-      <StatusBar barStyle="light-content" backgroundColor="#0b0f19" />
-      <KeyboardAvoidingView 
-        behavior={Platform.OS === 'ios' ? 'padding' : 'height'} 
-        style={styles.keyboardContainer}
-      >
-        <ScrollView contentContainerStyle={styles.scrollContainer} keyboardShouldPersistTaps="handled">
-          <View style={styles.header}>
-            <View style={styles.logoIcon}>
-              <Ionicons name="sparkles" size={36} color="#c084fc" />
-            </View>
-            <Text style={styles.logoText}>SmartRecall</Text>
-            <Text style={styles.subLogoText}>AI Knowledge Hub</Text>
+    <Screen>
+      <ScrollView contentContainerStyle={styles.scrollContainer} keyboardShouldPersistTaps="handled">
+        <View style={styles.header}>
+          <View style={styles.logoIcon}>
+            <Ionicons name="sparkles" size={36} color={theme.colors.secondary} />
           </View>
+          <Text style={[styles.logoText, theme.typography.headline]}>SmartRecall</Text>
+          <Text style={[styles.subLogoText, theme.typography.caption]}>AI Knowledge Hub</Text>
+        </View>
 
-          <View style={styles.glassCard}>
-            <Text style={styles.cardTitle}>Create Account</Text>
-            <Text style={styles.cardSubtitle}>Sign up to start organizing your files & links</Text>
+        <Card variant="glass">
+          <Text style={[styles.cardTitle, theme.typography.title]}>Create Account</Text>
+          <Text style={[styles.cardSubtitle, theme.typography.body, { color: theme.colors.textSecondary }]}>
+            Sign up to start organizing your files & links
+          </Text>
 
-            <View style={styles.inputGroup}>
-              <Text style={styles.inputLabel}>Username</Text>
-              <View style={styles.inputWrapper}>
-                <Ionicons name="person-outline" size={18} color="#94a3b8" style={styles.inputIcon} />
-                <TextInput
-                  style={styles.textInput}
-                  placeholder="Create username..."
-                  placeholderTextColor="#64748b"
-                  value={usernameInput}
-                  onChangeText={setUsernameInput}
-                  autoCapitalize="none"
-                />
-              </View>
-            </View>
+          <TextInputBase
+            label="Username"
+            iconName="person-outline"
+            placeholder="Create username..."
+            value={usernameInput}
+            onChangeText={setUsernameInput}
+            autoCapitalize="none"
+          />
 
-            <View style={styles.inputGroup}>
-              <Text style={styles.inputLabel}>Password</Text>
-              <View style={styles.inputWrapper}>
-                <Ionicons name="lock-closed-outline" size={18} color="#94a3b8" style={styles.inputIcon} />
-                <TextInput
-                  style={styles.textInput}
-                  placeholder="Create password..."
-                  placeholderTextColor="#64748b"
-                  secureTextEntry
-                  value={passwordInput}
-                  onChangeText={setPasswordInput}
-                  autoCapitalize="none"
-                />
-              </View>
-            </View>
+          <TextInputBase
+            label="Password"
+            iconName="lock-closed-outline"
+            placeholder="Create password..."
+            secureTextEntry
+            value={passwordInput}
+            onChangeText={setPasswordInput}
+            autoCapitalize="none"
+          />
 
-            <View style={styles.inputGroup}>
-              <Text style={styles.inputLabel}>Confirm Password</Text>
-              <View style={styles.inputWrapper}>
-                <Ionicons name="lock-closed-outline" size={18} color="#94a3b8" style={styles.inputIcon} />
-                <TextInput
-                  style={styles.textInput}
-                  placeholder="Confirm password..."
-                  placeholderTextColor="#64748b"
-                  secureTextEntry
-                  value={confirmPasswordInput}
-                  onChangeText={setConfirmPasswordInput}
-                  autoCapitalize="none"
-                />
-              </View>
-            </View>
+          <TextInputBase
+            label="Confirm Password"
+            iconName="lock-closed-outline"
+            placeholder="Confirm password..."
+            secureTextEntry
+            value={confirmPasswordInput}
+            onChangeText={setConfirmPasswordInput}
+            autoCapitalize="none"
+          />
 
-            {errorMsg ? (
-              <View style={styles.errorBox}>
-                <Ionicons name="alert-circle" size={16} color="#f87171" style={{ marginRight: 6 }} />
-                <Text style={styles.errorText}>{errorMsg}</Text>
-              </View>
-            ) : null}
+          <StatusMessage type="error" message={errorMsg} />
+          <StatusMessage type="success" message={successMsg} />
 
-            {successMsg ? (
-              <View style={styles.successBox}>
-                <Ionicons name="checkmark-circle" size={16} color="#10b981" style={{ marginRight: 6 }} />
-                <Text style={styles.successText}>{successMsg}</Text>
-              </View>
-            ) : null}
+          <Button 
+            title="Sign Up" 
+            onPress={handleSignUp} 
+            loading={loading}
+            style={{ marginTop: theme.spacing[3] }}
+          />
 
-            <TouchableOpacity 
-              style={[styles.primaryButton, { marginTop: 12 }]} 
-              onPress={handleSignUp}
-              disabled={loading}
-            >
-              {loading ? (
-                <ActivityIndicator color="#fff" size="small" />
-              ) : (
-                <Text style={styles.primaryButtonText}>Sign Up</Text>
-              )}
-            </TouchableOpacity>
-
-            <TouchableOpacity style={styles.toggleButton} onPress={onToggleAuth}>
-              <Text style={styles.toggleButtonText}>Already have an account? Sign In</Text>
-            </TouchableOpacity>
-          </View>
-        </ScrollView>
-      </KeyboardAvoidingView>
-    </SafeAreaView>
+          <Button 
+            title="Already have an account? Sign In" 
+            variant="ghost" 
+            onPress={onToggleAuth}
+            style={{ marginTop: theme.spacing[2] }}
+            textStyle={{ color: theme.colors.secondary }}
+          />
+        </Card>
+      </ScrollView>
+    </Screen>
   );
 }
 
 const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: '#0b0f19',
-  },
-  keyboardContainer: {
-    flex: 1,
-  },
   scrollContainer: {
-    padding: 24,
+    padding: theme.spacing[6],
     justifyContent: 'center',
     flexGrow: 1,
   },
   header: {
     alignItems: 'center',
-    marginBottom: 32,
-    marginTop: 10,
+    marginBottom: theme.spacing[8],
+    marginTop: theme.spacing[2],
   },
   logoIcon: {
     width: 68,
     height: 68,
-    borderRadius: 20,
-    backgroundColor: 'rgba(139, 92, 246, 0.15)',
+    borderRadius: theme.radius.xl,
+    backgroundColor: theme.colors.primarySubtle,
     alignItems: 'center',
     justifyContent: 'center',
     borderWidth: 1,
-    borderColor: 'rgba(139, 92, 246, 0.3)',
-    marginBottom: 16,
+    borderColor: theme.colors.primaryOverlay,
+    marginBottom: theme.spacing[4],
   },
   logoText: {
-    fontSize: 28,
-    fontWeight: 'bold',
-    color: '#fff',
-    letterSpacing: 0.5,
+    color: theme.colors.textPrimary,
   },
   subLogoText: {
-    fontSize: 13,
-    color: '#94a3b8',
-    marginTop: 4,
-  },
-  glassCard: {
-    backgroundColor: 'rgba(30, 41, 59, 0.45)',
-    borderRadius: 20,
-    padding: 24,
-    borderWidth: 1,
-    borderColor: 'rgba(255, 255, 255, 0.08)',
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 10 },
-    shadowOpacity: 0.3,
-    shadowRadius: 20,
-    elevation: 5,
+    color: theme.colors.textTertiary,
+    marginTop: theme.spacing[1],
   },
   cardTitle: {
-    fontSize: 22,
-    fontWeight: 'bold',
-    color: '#fff',
-    marginBottom: 8,
+    color: theme.colors.textPrimary,
+    marginBottom: theme.spacing[2],
   },
   cardSubtitle: {
-    fontSize: 13,
-    color: '#94a3b8',
-    marginBottom: 24,
-    lineHeight: 18,
-  },
-  inputGroup: {
-    marginBottom: 16,
-  },
-  inputLabel: {
-    color: '#cbd5e1',
-    fontSize: 12,
-    fontWeight: '600',
-    marginBottom: 8,
-  },
-  inputWrapper: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: 'rgba(15, 23, 42, 0.6)',
-    borderRadius: 10,
-    borderWidth: 1,
-    borderColor: 'rgba(255, 255, 255, 0.05)',
-    paddingHorizontal: 12,
-  },
-  inputIcon: {
-    marginRight: 10,
-  },
-  textInput: {
-    flex: 1,
-    paddingVertical: 12,
-    color: '#fff',
-    fontSize: 14,
-  },
-  errorBox: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    marginTop: 12,
-    padding: 10,
-    borderRadius: 8,
-    backgroundColor: 'rgba(239, 68, 68, 0.12)',
-    borderWidth: 1,
-    borderColor: 'rgba(239, 68, 68, 0.2)',
-  },
-  errorText: {
-    color: '#f87171',
-    fontSize: 12,
-    fontWeight: '500',
-    flex: 1,
-  },
-  successBox: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    marginTop: 12,
-    padding: 10,
-    borderRadius: 8,
-    backgroundColor: 'rgba(16, 185, 129, 0.12)',
-    borderWidth: 1,
-    borderColor: 'rgba(16, 185, 129, 0.2)',
-  },
-  successText: {
-    color: '#10b981',
-    fontSize: 12,
-    fontWeight: '500',
-    flex: 1,
-  },
-  primaryButton: {
-    backgroundColor: '#8b5cf6',
-    borderRadius: 10,
-    paddingVertical: 14,
-    alignItems: 'center',
-    justifyContent: 'center',
-    shadowColor: '#8b5cf6',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.25,
-    shadowRadius: 10,
-    elevation: 4,
-  },
-  primaryButtonText: {
-    color: '#fff',
-    fontSize: 15,
-    fontWeight: '600',
-  },
-  toggleButton: {
-    alignItems: 'center',
-    marginTop: 18,
-    paddingVertical: 4,
-  },
-  toggleButtonText: {
-    color: '#c084fc',
-    fontSize: 13,
-    fontWeight: '500',
+    marginBottom: theme.spacing[6],
   },
 });

@@ -9,7 +9,7 @@
 import { useEffect, useRef } from 'react';
 import { Platform } from 'react-native';
 
-const API_BASE_URL = 'http://localhost:8000';
+const API_BASE_URL = 'http://10.105.160.215:8000';
 
 // Dynamically import expo-notifications so the app doesn't crash on web
 // if the module isn't available.

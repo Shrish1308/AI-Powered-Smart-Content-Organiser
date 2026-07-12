@@ -4,7 +4,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 export const AuthContext = createContext();
 
 // FastAPI Backend URL - must match HomeScreen.js
-const API_BASE_URL = 'http://localhost:8000';
+const API_BASE_URL = 'http://10.105.160.215:8000';
 
 export const AuthProvider = ({ children }) => {
   const [isLoading, setIsLoading] = useState(true);
